@@ -1,7 +1,7 @@
 # Flight Tracking v2 — Planning Doc
 
 **Status:** DRAFT — feature planning, pre-dev. Started 2026-08-08 (Thomas + Hex).
-**Pending input:** Vector (community/ops perspective) — pinged 2026-08-08, fold in on reply.
+**Pending input:** Vector part 2 of 2 (part 1 folded in below, 2026-08-08).
 
 ## Vision
 
@@ -34,7 +34,42 @@ From `project-flight-tracking` (legacy repo, stays as reference + data source):
 - RLS policies are own-rows-only in places (e.g. flight notes SELECT) — wrong model for
   a team/fleet tool where everyone should see the fleet's flights.
 - Hosted on Vercel + hosted Supabase — moving to Arrow infra regardless.
-- _Placeholder: Vector's community-reported pain points._
+
+### Who actually uses v1 (Vector, 2026-08-08)
+
+Small but real user base:
+
+- **Erick** — heaviest user; devkit pilot. Registers aircraft, uploads logs, files
+  maintenance entries (e.g. Jul 23 motor-arm adjustment).
+- **Thomas** — Texas ops / Javelina flights.
+- **Zeynep** — closest thing to a maintainer; built the flight-report-generator
+  integration with Vector (March), reviews everyone's DataFlash logs.
+- **Julius** — notable NON-user. Caribou logs get shared as raw `.bin` over Discord
+  CDN links, which expire/rot (Vector has had to re-fetch via message-history tricks).
+- **Gray / Kellan** — fly in Texas; Kellan held platform credentials early on.
+
+Thomas's verdict on the call: "if we keep using this app (we should), it needs some
+updates."
+
+### Community-reported pain points (Vector, part 1)
+
+1. **Intermittent add-aircraft failure** (Jul 15) — Erick logged in fine, save
+   silently did nothing, then worked days later during a call. Suspected permissions;
+   never root-caused. → v2: no silent failures — every write surfaces success/error,
+   and RLS denials must be visible, not swallowed.
+2. **The "JIS M-40" mystery** — an aircraft in the shared DB nobody on the team
+   added, with a scary log entry ("props visibly seen slowing... stopping mid-air at
+   70m"). Still unowned. A data-governance hole: no ownership/attribution model on
+   records. → v2: every record carries `created_by` + timestamps; audit-friendly.
+3. **Upload fragility** — the March report-integration work needed fixes (macbinary
+   handling) just to get logs in. → v2 pipeline must be robust to real-world file
+   weirdness.
+4. **Adoption gap** — "register aircraft before flying" sat on action registers for
+   weeks; real flight data lives scattered across Discord threads, the GitHub wiki,
+   and the tracker. → v2's job is to be lower-friction than a Discord post
+   (quick-log, drag-drop upload), or the scatter continues. Julius's Discord-CDN
+   habit is the concrete target: P2's API-token upload (or a Discord-bot ingest via
+   Vector) would capture Caribou logs before the links rot.
 
 ## v2 architecture (decided)
 
@@ -141,10 +176,18 @@ Open modeling question: keep flight→legs two-level (v1) or flatten to flights 
 
 ## Open questions (for Thomas / Vector)
 
-1. Who are the v2 users beyond Thomas + Arrow engineers? Community pilots with
-   devkits? Changes auth/visibility design (P2 public pages).
+1. ~~Who are the v2 users beyond Thomas + Arrow engineers?~~ **Answered (Vector):**
+   community devkit pilots are real users today (Erick), plus Zeynep in a
+   maintainer/reviewer role — so member auth for non-Arrow-staff is P0, and a
+   reviewer-friendly view of *other people's* logs matters (fleet-visible RLS
+   confirmed as the right call).
 2. Flatten legs → flights? (Hex says yes.)
 3. Parser language: reuse v1 TS dataflash code vs pymavlink port. Need a look at how
    complete `dataflash/` actually is.
-4. Is maintenance tracking real usage or aspirational in v1? (Vector may know.)
-5. Anything from v1 data worth NOT importing (test junk)?
+4. ~~Is maintenance tracking real usage or aspirational?~~ **Answered (Vector):**
+   real — Erick files maintenance entries. Keep maintenance v2 at P1.
+5. Anything from v1 data worth NOT importing (test junk)? The unowned "JIS M-40"
+   aircraft + its log entry need an ownership decision at import time.
+6. How do we capture Julius/Caribou logs? He won't use the web UI — Discord-CDN
+   links rot. Options: Vector-driven bot ingest, API-token upload. (Awaiting
+   Vector part 2 before deciding.)
