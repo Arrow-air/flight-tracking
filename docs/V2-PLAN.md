@@ -1,9 +1,10 @@
 # Flight Tracking v2 — Planning Doc
 
 **Status:** DRAFT — feature planning, pre-dev. Started 2026-08-08 (Thomas + Hex).
-**Vector input:** parts 1 + 2 folded in (2026-08-08). Still pending: the full May
-fleet/maintenance strategy study (Vector is digging it out — will refine the data
-model section when it lands).
+**Vector input:** COMPLETE (2026-08-08) — parts 1 + 2 and the full May 15 strategy
+study (Vector's critique doc) all folded in. Study source:
+`flight-tracker-strategy-may2026-vector-critique.md` (kept in Hex's workspace
+`downloads/`; worth committing to this repo's `docs/` if we want it versioned).
 
 ## Vision
 
@@ -102,16 +103,51 @@ not new ideas:
    battery config (cell count), airframe class (multi/fixed-wing), and per-type
    parser thresholds; nothing hardcoded to Quiver.
 
-### Strategic frame (Thomas + Vector, May study)
+### Strategic frame (Thomas + Vector, May 15 study — full text received)
 
-The May strategy study reframed the tracker as **Arrow's data infrastructure**, not a
-SaaS toy: airframe registry (who built it, when, from which components), component
-install/remove history, a maintenance/incident/field-action event stream per airframe,
-AIP-009 hooks (warranty claims + manufacturer scoring referencing tracker records),
-and structured evidence exports (SORA / Part 108, resale provenance). Vector's advice,
-adopted here: **v2 can ship simple, but the data model must let those hang off it
-later.** Concretely: components and events are their own tables from M0, even if the
-UI for them is thin. (Full study text pending from Vector — refine this section then.)
+The study reframes the tracker as **Arrow's data infrastructure**, not a SaaS toy, and
+it's blunt about the wedge:
+
+> Flight logs + parts lifecycle + maintenance history + manufacturer quality feedback
+> for open-stack aircraft — **not** generic log analytics (AirData owns that space;
+> 400k+ pilots, 60M+ flights).
+
+The tracker is an **airframe event history system** where a flight log is just one
+event type alongside maintenance, assembly, part replacement, incidents, inspections,
+field actions, and ownership transfer.
+
+**First strategic milestone (study §1):** one real Quiver airframe born into a
+manufacturing workflow, accumulating trustworthy flight + maintenance +
+component-replacement history, producing an **exportable airframe history report**.
+Everything downstream (AIP-009 QA, insurance/regulatory evidence, resale provenance)
+hangs off that if it works. This is the strategic acceptance test for v2 — the
+data-model choices below are shaped to pass it.
+
+Key sequencing guidance we adopt:
+
+- **Trust before crypto (§3.5):** no attestation layer in v2. The order is
+  (1) append-only audit history in the DB, (2) exports with hash + signature,
+  (3) external anchoring *only if someone requires it*. v2 builds (1) and the
+  schema for (2).
+- **Insurance/regulatory as design constraints, not deliverables (§3.6):** capture
+  events cleanly, preserve audit history, don't structure data in ways that break
+  chain-of-custody — but build zero insurer/regulator UI.
+- **Two paths (§3.4):** Path A = AIP-009 integration (primary case); Path B =
+  standalone open-stack lifecycle tool. v2's core (aircraft/component/event
+  primitives) must be useful under Path B alone, so the app doesn't die if AIP-009
+  slips.
+- **Phasing (§3.8):** study Phase 1 "lifecycle primitives" ≈ our v2 scope. Phase 2
+  (manufacturer ops: QR/serial workflow, onboarding, scorecards) and Phase 3
+  (external trust surfaces) are explicitly out of v2 — the schema just mustn't
+  preclude them.
+- **Adoption risk #1 is data-entry burden (§10 R2):** lifecycle records only have
+  value if complete. This independently confirms the quick-log/low-friction bet as
+  the most strategically important UX decision in v2, not just a comfort feature.
+
+**Caveats carried from the study:** market numbers are directional self-labeled
+estimates (§3.1), and the doc predates AIP-010 and the treasury sale, so funding
+context has shifted. Funding tiers / pricing (§8–9) are Arrow-governance material,
+not v2 build scope — noted here only so we don't re-derive them.
 
 ### Boundary: tracker vs QuiverHub (proposed — needs Thomas sign-off)
 
@@ -184,6 +220,12 @@ UI for them is thin. (Full study text pending from Vector — refine this sectio
     flight analysis — the Mar 2 commitment, finally built.
 13. **Fleet dashboard.** Home page = fleet at a glance: recent flights, hours this
     month, aircraft status, open squawks/issues.
+14. **Airframe history report.** One-click export per aircraft: identity + component
+    history + flights + maintenance + incidents + total hours, as JSON/PDF with a
+    generated timestamp and content hash. This is the study's proof artifact
+    ("first strategic milestone") — pulled forward from the generic P2 evidence
+    exports because it's cheap once the event tables exist and it's what makes the
+    strategic case testable.
 
 ### P2 — later / nice-to-have
 
@@ -196,8 +238,13 @@ UI for them is thin. (Full study text pending from Vector — refine this sectio
   QuiverHub push / Vector Discord-bot ingest for Julius's Caribou logs).
 - **$ARROW rewards for uploads** — mechanics TBD, but P0's attribution model
   (created_by + checksum + timestamps) is designed to support it.
-- **Evidence exports** — structured SORA/Part 108 packets, warranty claims (AIP-009),
-  resale provenance reports. Data model supports these from M0; export UI later.
+- **Evidence exports beyond the airframe history report** — structured SORA/Part 108
+  packets, warranty claims (AIP-009), resale provenance, *signed* (not just hashed)
+  exports. Data model supports these from M0; the P1 history report is the template
+  they extend.
+- **AIP-009 data-interface spec** (study 90-day M6) — how manufacturers create/update
+  records: required fields at manufacture, registration flow, post-sale submission.
+  A doc, not code; belongs to Arrow governance timing, tracked here so it's not lost.
 - Remote-ID fields: in schema, no UI until Part 107 forces it.
 
 ## Data model sketch (v2)
@@ -207,14 +254,20 @@ user_profiles (id, name, role)
 sites (id, name, lat/lon, elevation, notes)
 aircraft_types (id, name, class: multirotor|fixed_wing, cells, parser_profile jsonb)
   -- Quiver, Caribou (hex/18S), Spearhead, Kestrel; drives thresholds + battery math
-aircraft (id, serial UNIQUE, name, type_id, status, notes, photo,
+aircraft (id, serial UNIQUE, name, type_id, status, notes, photo, design_rev,
           built_by, built_at, remote_id fields)
-components (id, kind, part_no, serial, notes)
-component_events (aircraft_id, component_id, event: installed|removed, at, by, notes)
-  -- May-study spine: build provenance + install/remove history from M0
+  -- total hours/cycles derived from flights, not stored
+components (id, kind, part_no, serial, batch_no, vendor, design_rev, mfg_date, notes)
+  -- study §5 minimums; hours-while-installed derived from component_events × flights
+component_events (aircraft_id, component_id, event: installed|removed, position,
+                  at, by, reason, notes)
+  -- study's "Assembly" entity as an event stream; position matters ("front-left
+  -- motor for 37.2h"), reason captures why it came off
 airframe_events (aircraft_id, kind: maintenance|incident|field_action, author, date,
-                 title, body, hours_at)
-  -- unified event stream; maintenance_logs from v1 import land here
+                 title, body, hours_at, flight_id NULL, signoff_by NULL)
+  -- unified event stream; maintenance_logs from v1 import land here. If field
+  -- actions get real (AIP-009 Phase 2: issuer, due date, compliance status per
+  -- affected batch) they graduate to their own table — kind enum keeps the door open
 issues (aircraft_id, reporter, opened_at, severity, status, problem, fix,
         fixable: yes|no|unknown, resolved_by/at)
   -- May 7 issue/failure log; "squawk" = issue with severity=low
@@ -234,6 +287,12 @@ flight_log_series (log_id, channel, t[], v[])  -- downsampled; or parquet in sto
 param_snapshots (log_id, params jsonb)
 media (owner_table, owner_id, object_path, kind: photo|report|doc)
   -- crash-record evidence: photos + pilot report attach to issues/airframe_events
+exports (id, report_type, aircraft_id, generated_by, generated_at, content_hash,
+         object_path, visibility: private|shared, included_range jsonb)
+  -- study's Export entity: the airframe history report lands here, hash-stamped
+audit_log (id, table_name, row_id, action, actor, at, diff jsonb)  -- append-only
+  -- study §3.5 step 1: trigger-fed, no UI in v2; the trust foundation everything
+  -- later (signed exports, attestation) builds on
 ```
 
 Open modeling question: keep flight→legs two-level (v1) or flatten to flights with a
@@ -256,8 +315,17 @@ Open modeling question: keep flight→legs two-level (v1) or flatten to flights 
   manual logbook.
 - **M2 — Log pipeline.** Upload → parser service → flight card. The headline feature.
 - **M3 — Maps + plots + params.** Analysis UI.
-- **M4 — Maintenance + dashboard.**
+- **M4 — Maintenance + dashboard + airframe history report.** The report closes the
+  loop on the study's first strategic milestone: a real airframe with real history
+  producing an exportable record.
 - **M5 — Import + cutover.** Legacy import, redirect old app, archive.
+
+The study's 90-day roadmap (§6) maps cleanly onto these: study-M1 canonical data
+model = our M0, study-M2 identity workflow = our M1, study-M3 log attachment = our
+M2, study-M4 events = our M4, study-M5 history report = our M4. Study-M6 (AIP-009
+interface draft) is the P2 doc item. Component-hours accrual (study-M3 acceptance:
+"installed components receive accumulated hours from that flight") is derived at
+query time from component_events × flights — no extra pipeline work.
 
 ## Open questions (for Thomas / Vector)
 
@@ -284,3 +352,8 @@ Open modeling question: keep flight→legs two-level (v1) or flatten to flights 
 9. Is the issue/failure log P1 (with maintenance) or does the Gray battery
    incident / crash-record agreement justify pulling it into P0? It's cheap once
    the tables exist.
+10. Commit Vector's May 15 study into this repo's `docs/`? It's directly reusable
+    (data model, roadmap, risk register) but contains funding/pricing material —
+    depends on who can see this repo. Also: the study's funding/governance asks
+    (§8) predate AIP-010 and the treasury sale; if v2 wants Arrow funding, that
+    section needs a refresh before anyone cites it.
