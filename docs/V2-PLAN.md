@@ -1,7 +1,9 @@
 # Flight Tracking v2 — Planning Doc
 
 **Status:** DRAFT — feature planning, pre-dev. Started 2026-08-08 (Thomas + Hex).
-**Pending input:** Vector part 2 of 2 (part 1 folded in below, 2026-08-08).
+**Vector input:** parts 1 + 2 folded in (2026-08-08). Still pending: the full May
+fleet/maintenance strategy study (Vector is digging it out — will refine the data
+model section when it lands).
 
 ## Vision
 
@@ -71,6 +73,57 @@ updates."
    habit is the concrete target: P2's API-token upload (or a Discord-bot ingest via
    Vector) would capture Caribou logs before the links rot.
 
+### Feature asks from Arrow meetings (Vector, part 2)
+
+All previously agreed or requested in Arrow meetings — v2 inherits these as commitments,
+not new ideas:
+
+1. **Payload/attachment config per flight + attachment database** (Zeynep, Feb 27).
+   Payload mass changes how logs are interpreted; ties to the granular-spreader work.
+   → P1: attachments as first-class entities, per-flight payload config feeding the
+   flight card (mass-aware performance expectations).
+2. **Wind-data correlation** — explicit Mar 2 decision, never built. → weather
+   auto-fill is P0; wind-vs-log correlation joins the P1 analysis views.
+3. **Formal issue/failure log** (Erick + Thomas, May 7): problem / status / fix /
+   fixable-or-not. The Gray battery incident (precharge overheating hypothesis) has
+   no home today. Crash-record minimums already agreed: photos + pilot's report +
+   DataFlash log. → folded into Maintenance v2 (P1): squawks become a full
+   issue/failure workflow with evidence attachments and crash records.
+4. **$ARROW rewards for log uploads** (Erick, Apr 28) — never designed. Rewards
+   mechanics are P2/later, but the prerequisite is P0: verifiable per-upload
+   attribution (`created_by` + checksums + timestamps) from day one.
+5. **Remote-ID fields** — exist in v1, empty pending Part 107. Keep in the v2 schema;
+   no UI investment until there's a regulatory driver.
+6. **QuiverHub boundary** — "decide what data lives where: tracker vs Alex's RPi/REST
+   side" was a Feb/Mar action item, never resolved. Settled below (see "Boundary:
+   tracker vs QuiverHub") so v2 doesn't inherit the ambiguity.
+7. **Multi-aircraft-type support** — Caribou (hex, 18S, SORA 2.5 evidence needs),
+   Spearhead (fixed-wing), Kestrel. v1 is Quiver-shaped. → P0: aircraft `type` drives
+   battery config (cell count), airframe class (multi/fixed-wing), and per-type
+   parser thresholds; nothing hardcoded to Quiver.
+
+### Strategic frame (Thomas + Vector, May study)
+
+The May strategy study reframed the tracker as **Arrow's data infrastructure**, not a
+SaaS toy: airframe registry (who built it, when, from which components), component
+install/remove history, a maintenance/incident/field-action event stream per airframe,
+AIP-009 hooks (warranty claims + manufacturer scoring referencing tracker records),
+and structured evidence exports (SORA / Part 108, resale provenance). Vector's advice,
+adopted here: **v2 can ship simple, but the data model must let those hang off it
+later.** Concretely: components and events are their own tables from M0, even if the
+UI for them is thin. (Full study text pending from Vector — refine this section then.)
+
+### Boundary: tracker vs QuiverHub (proposed — needs Thomas sign-off)
+
+- **Tracker owns:** the permanent record — airframes, components, flights, logs,
+  analysis results, maintenance/incidents, evidence exports. Anything you'd need
+  months later for SORA, warranty, or provenance.
+- **QuiverHub (Alex's RPi/REST side) owns:** live/operational data — telemetry in
+  flight, on-aircraft state, field-side capture. It is a *source*, not a store:
+  anything durable it produces (logs, flight events) pushes to the tracker via the
+  P2 API-token upload path.
+- Rule of thumb: QuiverHub is the nervous system, tracker is the memory.
+
 ## v2 architecture (decided)
 
 - **Frontend:** Vue 3 + Vite + TS SPA (scaffold live at flights.arrowair.com).
@@ -92,8 +145,10 @@ updates."
    restricted to author/admin. Fixes v1's own-rows-only weirdness.
 2. **Aircraft registry.** Fleet list + aircraft detail page: serial, type, name,
    status (active/maintenance/retired), photo. Cumulative stats (total flights, hours)
-   derived from flight data. Hardware/config: revisions over time (what motor/ESC/FC
-   was on it when), not just a flat table.
+   derived from flight data. Type-aware from day one (Quiver, Caribou hex/18S,
+   Spearhead fixed-wing, Kestrel): type drives battery config and parser thresholds.
+   Hardware as component install/remove events over time (see May study), not a flat
+   table — build info (who/when/which components) is the seed of provenance.
 3. **Flights & legs.** Keep the flight-leg model but make entry *fast*: one-screen
    quick-log (aircraft, pilot, site, times, notes), tags, weather auto-fill from
    log timestamp + site (Open-Meteo historical — same trick as Hex's flight cards).
@@ -117,38 +172,68 @@ updates."
    storage) so the UI never touches the raw `.bin`.
 9. **Params.** Keep v1's param diff (it was the good part) — diff any two logs, diff
    against an aircraft's "blessed" param set, flag drift.
-10. **Maintenance v2.** Squawks (issue → resolved workflow) distinct from performed
-    maintenance; component hours tracked from flight time; simple due-by reminders
-    (e.g. "inspect after N hours").
-11. **Fleet dashboard.** Home page = fleet at a glance: recent flights, hours this
-    month, aircraft status, open squawks.
+10. **Maintenance v2 + issue/failure log.** Squawks grow into the formal
+    issue/failure log agreed May 7: problem / status / fix / fixable-or-not, with
+    evidence attachments. Crash records enforce the agreed minimums (photos +
+    pilot's report + DataFlash log). Distinct from performed maintenance; component
+    hours tracked from flight time; simple due-by reminders ("inspect after N hours").
+11. **Payload/attachment config.** Attachment database (spreader, camera, etc. with
+    mass + notes); per-flight payload selection; flight card and analysis become
+    mass-aware.
+12. **Wind correlation.** Wind (from site weather at log timestamps) overlaid on
+    flight analysis — the Mar 2 commitment, finally built.
+13. **Fleet dashboard.** Home page = fleet at a glance: recent flights, hours this
+    month, aircraft status, open squawks/issues.
 
 ### P2 — later / nice-to-have
 
-- Public read-only pages (share a flight / fleet stats with community) — Vector's
-  input will tell us if this matters.
-- Realtime "live" ops board (who's flying now) — probably premature.
+- Public read-only pages (share a flight / fleet stats with community).
+- Realtime "live" ops board (who's flying now) — probably premature; and live data
+  is QuiverHub's side of the boundary anyway.
 - ULog/PX4 support (Quiver is ArduPilot; only if needed).
 - Pilot logbook export (per-pilot hours, CSV/PDF).
-- API tokens for programmatic upload (auto-upload from ground station / Hex).
+- API tokens for programmatic upload (auto-upload from ground station / Hex /
+  QuiverHub push / Vector Discord-bot ingest for Julius's Caribou logs).
+- **$ARROW rewards for uploads** — mechanics TBD, but P0's attribution model
+  (created_by + checksum + timestamps) is designed to support it.
+- **Evidence exports** — structured SORA/Part 108 packets, warranty claims (AIP-009),
+  resale provenance reports. Data model supports these from M0; export UI later.
+- Remote-ID fields: in schema, no UI until Part 107 forces it.
 
 ## Data model sketch (v2)
 
 ```
 user_profiles (id, name, role)
 sites (id, name, lat/lon, elevation, notes)
-aircraft (id, serial UNIQUE, name, type, status, notes, photo)
-aircraft_config_revisions (aircraft_id, effective_from, hardware jsonb, notes)
-maintenance_logs (aircraft_id, author, type, date, title, notes, hours_at)
-squawks (aircraft_id, reporter, opened_at, severity, status, resolved_by/at)
-flights (id, aircraft_id, pilot_id, site_id, started_at, ended_at, title, notes)
+aircraft_types (id, name, class: multirotor|fixed_wing, cells, parser_profile jsonb)
+  -- Quiver, Caribou (hex/18S), Spearhead, Kestrel; drives thresholds + battery math
+aircraft (id, serial UNIQUE, name, type_id, status, notes, photo,
+          built_by, built_at, remote_id fields)
+components (id, kind, part_no, serial, notes)
+component_events (aircraft_id, component_id, event: installed|removed, at, by, notes)
+  -- May-study spine: build provenance + install/remove history from M0
+airframe_events (aircraft_id, kind: maintenance|incident|field_action, author, date,
+                 title, body, hours_at)
+  -- unified event stream; maintenance_logs from v1 import land here
+issues (aircraft_id, reporter, opened_at, severity, status, problem, fix,
+        fixable: yes|no|unknown, resolved_by/at)
+  -- May 7 issue/failure log; "squawk" = issue with severity=low
+attachments_catalog (id, name, kind, mass_g, notes)  -- spreader, camera, ...
+flight_payloads (flight_id, attachment_id, qty)
+flights (id, aircraft_id, pilot_id, site_id, started_at, ended_at, title, notes,
+         created_by)
   -- "flight" = v1 "leg"; drop the extra nesting unless multi-leg sessions prove needed
 flight_tags (flight_id, tag_id)
 flight_notes (flight_id, author, type, body)
-flight_logs (flight_id, object_path, checksum UNIQUE, size, status: uploaded|parsing|parsed|error)
-flight_log_summary (log_id, duration, distance, max_alt, batt stats, health jsonb, modes jsonb)
+flight_logs (flight_id, object_path, checksum UNIQUE, size, uploaded_by, uploaded_at,
+             status: uploaded|parsing|parsed|error)
+  -- attribution here is the $ARROW-rewards + governance foundation
+flight_log_summary (log_id, duration, distance, max_alt, batt stats, health jsonb,
+                    modes jsonb, wind jsonb)
 flight_log_series (log_id, channel, t[], v[])  -- downsampled; or parquet in storage
 param_snapshots (log_id, params jsonb)
+media (owner_table, owner_id, object_path, kind: photo|report|doc)
+  -- crash-record evidence: photos + pilot report attach to issues/airframe_events
 ```
 
 Open modeling question: keep flight→legs two-level (v1) or flatten to flights with a
@@ -189,5 +274,13 @@ Open modeling question: keep flight→legs two-level (v1) or flatten to flights 
 5. Anything from v1 data worth NOT importing (test junk)? The unowned "JIS M-40"
    aircraft + its log entry need an ownership decision at import time.
 6. How do we capture Julius/Caribou logs? He won't use the web UI — Discord-CDN
-   links rot. Options: Vector-driven bot ingest, API-token upload. (Awaiting
-   Vector part 2 before deciding.)
+   links rot. Part 2 tilts this toward **Vector-driven Discord-bot ingest** riding
+   the P2 API-token path (attribution built in, zero behavior change for Julius).
+   Needs a priority call: worth pulling forward to P1?
+7. **QuiverHub boundary** — proposed split above ("tracker = memory, QuiverHub =
+   nervous system"). Sign off, or loop in Alex?
+8. Payload/attachment DB scope for M-something: just mass + name (enough for
+   analysis), or full spreader-config detail from the granular work?
+9. Is the issue/failure log P1 (with maintenance) or does the Gray battery
+   incident / crash-record agreement justify pulling it into P0? It's cheap once
+   the tables exist.
