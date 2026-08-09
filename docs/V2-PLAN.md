@@ -1,6 +1,8 @@
 # Flight Tracking v2 — Planning Doc
 
-**Status:** DRAFT — feature planning, pre-dev. Started 2026-08-08 (Thomas + Hex).
+**Status:** DRAFT v2 — Thomas's first review round (2026-08-09) folded in: roles
+model decided, GPS privacy added, bulk upload added, public data layer promoted,
+flatten + pymavlink decided. Open questions down to Q9–Q12.
 **Vector input:** COMPLETE (2026-08-08) — parts 1 + 2 and the full May 15 strategy
 study (Vector's critique doc) all folded in. Study source:
 `flight-tracker-strategy-may2026-vector-critique.md` (kept in Hex's workspace
@@ -13,6 +15,20 @@ log on it, and get back an aircraft-aware picture — flight card, health, param
 that engineers, pilots, and the community can actually use. v1 proved the shape
 (aircraft → flight legs → logs → analysis); v2 makes it fast, complete, and ours
 (Openship + self-hosted Supabase).
+
+Two more pillars (Thomas, 2026-08-09):
+
+1. **A crowdsourced flight-data store.** The accumulated logs are a dataset, not
+   just records — the community should be able to bulk-download flight data (with
+   filters: aircraft type, attachment/payload, etc.) and use it to improve
+   parameters and flight mechanics (PID tuning, control improvements). This pulls
+   the public data layer up from "nice-to-have" to a core product goal.
+2. **Product lifecycle tracking.** Manufacturing entries, maintenance logs,
+   equipment failures — the tracker should answer questions like *"how long can a
+   Quiver motor run before it is at risk of failure?"* with real fleet data. This
+   confirms the May study's airframe-event-history frame ("Yes" — Thomas) and adds
+   a concrete acceptance question for the component/event data model: component
+   hours-at-failure must be aggregatable across the fleet.
 
 ## What v1 has (feature inventory)
 
@@ -71,8 +87,8 @@ updates."
    weeks; real flight data lives scattered across Discord threads, the GitHub wiki,
    and the tracker. → v2's job is to be lower-friction than a Discord post
    (quick-log, drag-drop upload), or the scatter continues. Julius's Discord-CDN
-   habit is the concrete target: P2's API-token upload (or a Discord-bot ingest via
-   Vector) would capture Caribou logs before the links rot.
+   habit is the concrete target: the P1 API-token upload (or a P2 Discord-bot
+   ingest via Vector) would capture Caribou logs before the links rot.
 
 ### Feature asks from Arrow meetings (Vector, part 2)
 
@@ -149,7 +165,12 @@ estimates (§3.1), and the doc predates AIP-010 and the treasury sale, so fundin
 context has shifted. Funding tiers / pricing (§8–9) are Arrow-governance material,
 not v2 build scope — noted here only so we don't re-derive them.
 
-### Boundary: tracker vs QuiverHub (proposed — needs Thomas sign-off)
+### Boundary: tracker vs QuiverHub (SIGNED OFF — Thomas, 2026-08-09)
+
+Thomas's addition: QuiverHub may end up being *one of many* tools people use to
+interact with their aircraft. The tracker should make it easy for any such tool to
+push logs/flight data in — which makes the API-token upload path a committed
+feature (promoted to P1 below), not a nice-to-have.
 
 - **Tracker owns:** the permanent record — airframes, components, flights, logs,
   analysis results, maintenance/incidents, evidence exports. Anything you'd need
@@ -176,66 +197,120 @@ not v2 build scope — noted here only so we don't re-derive them.
 
 ### P0 — core (can't ship without)
 
-1. **Auth + roles.** GoTrue email auth; roles `admin` / `member` (maybe `viewer`).
-   Fleet-visible RLS: any authenticated member sees all aircraft/flights; writes
-   restricted to author/admin. Fixes v1's own-rows-only weirdness.
-2. **Aircraft registry.** Fleet list + aircraft detail page: serial, type, name,
+1. **Auth + roles (DECIDED — Thomas, 2026-08-09).** GoTrue email auth + **GitHub
+   OAuth** (natural fit for the open-stack community; GoTrue supports it natively).
+   Three roles:
+   - **admin** — sees all data (e.g. flight test engineer reviewing the whole fleet).
+   - **manufacturer** — the *only* role that can create new aircraft records. This
+     bakes in the provenance story: an airframe is born in a manufacturing workflow,
+     not self-registered. Devkit implication: Arrow creates the aircraft record at
+     build/ship time and assigns the buyer as operator.
+   - **operator** — write access to aircraft they control (via an
+     `aircraft_operators` assignment), can upload flight/maintenance data for those
+     aircraft.
+   Fleet-visible reads for authenticated users stays (fixes v1's own-rows-only
+   weirdness), with the GPS-privacy carve-out below.
+2. **GPS/location privacy (NEW — Thomas, 2026-08-09).** People won't want their
+   flight locations public. Uploader's GPS data stays visible to them (and admins);
+   it is **stripped when anyone else downloads the log** or views derived products.
+   Design approach: parser writes a *sanitized* log copy (GPS/POS/GPA messages
+   removed) at parse time — stripping a `.bin` on the fly per-download is fragile;
+   pre-generating the sanitized artifact is cheap and cacheable. Derived data
+   (map tracks, home points, site links) carries the same visibility rule. Distance/
+   speed/altitude summaries survive sanitization (relative values, no coordinates).
+   Open: default private vs opt-in, per-user vs per-flight (Q11).
+3. **Aircraft registry.** Fleet list + aircraft detail page: serial, type, name,
    status (active/maintenance/retired), photo. Cumulative stats (total flights, hours)
    derived from flight data. Type-aware from day one (Quiver, Caribou hex/18S,
    Spearhead fixed-wing, Kestrel): type drives battery config and parser thresholds.
    Hardware as component install/remove events over time (see May study), not a flat
    table — build info (who/when/which components) is the seed of provenance.
-3. **Flights & legs.** Keep the flight-leg model but make entry *fast*: one-screen
-   quick-log (aircraft, pilot, site, times, notes), tags, weather auto-fill from
-   log timestamp + site (Open-Meteo historical — same trick as Hex's flight cards).
-   Sites/locations as first-class entities (ranch, test field...) instead of free text.
-4. **Log upload + parse pipeline.** Drag-drop `.bin` (multi-file), checksum dedupe,
+4. **Flights (flattened — DECIDED).** Legs → flights, one level; `session_id`
+   grouping if multi-leg days ever need it. Two entry modes, both first-class:
+   - **Quick-log** — one-screen entry (aircraft, pilot, site, times, notes), tags,
+     weather auto-fill from log timestamp + site (Open-Meteo historical — same
+     trick as Hex's flight cards). Sites/locations as first-class entities.
+   - **Bulk dump (NEW — Thomas, 2026-08-09)** — end of an ag-ops day, drop the whole
+     day's `.bin` files at once; each becomes a flight with aircraft/pilot/site
+     defaulted from the batch and times/duration/stats auto-derived by the parser.
+     No per-flight write-up required; details can be added later. Detailed entry
+     stays for active flight-test work on prototypes. This is the low-friction bet
+     (study §10 R2) made concrete: the daily-ops path must be near-zero typing.
+5. **Log upload + parse pipeline.** Drag-drop `.bin` (multi-file), checksum dedupe,
    background parse, status visible in UI. Parsed once, results stored — nothing
-   re-parses on every view like an edge fn would.
-5. **Flight card (auto-summary per log).** Duration, distances, max alt/speed,
+   re-parses on every view like an edge fn would. Produces the sanitized log copy
+   (see GPS privacy) alongside summary/series/params.
+6. **Flight card (auto-summary per log).** Duration, distances, max alt/speed,
    battery (voltage sag, mAh, per-cell), modes timeline, arm/disarm events, errors.
    Port the health-score approach from Hex's ArduPilot analysis work (vibe, EKF
    variance, compass σ, motor balance, RC RSSI thresholds — see `memory/2026-02-13.md`
    in Hex's workspace for the thresholds that worked).
-6. **Data import from v1.** Script + mapping doc; run once at cutover.
+7. **Data import from v1.** Script + mapping doc; run once at cutover.
 
 ### P1 — the reasons people will actually like it
 
-7. **Map view.** GPS track per flight on a map (MapLibre + OSM/satellite tiles);
+8. **Map view.** GPS track per flight on a map (MapLibre + OSM/satellite tiles);
    altitude-colored path; home point. Fleet map of sites.
-8. **Plots.** Time-series viewer for key channels (alt, speed, battery, vibe, RCOU)
+9. **Plots.** Time-series viewer for key channels (alt, speed, battery, vibe, RCOU)
    from stored parse output — pre-downsampled series in Postgres (or parquet in
    storage) so the UI never touches the raw `.bin`.
-9. **Params.** Keep v1's param diff (it was the good part) — diff any two logs, diff
-   against an aircraft's "blessed" param set, flag drift.
-10. **Maintenance v2 + issue/failure log.** Squawks grow into the formal
+10. **Params.** Keep v1's param diff (it was the good part) — diff any two logs, diff
+   against an aircraft's "blessed" param set, flag drift. Thomas: "a big one" —
+   and comparison must work **across users/fleet**: diff your params against
+   someone else's flight of the same aircraft type, not just your own history.
+   Params carry no GPS, so cross-user comparison is privacy-clean by default.
+11. **Maintenance v2 + issue/failure log.** Squawks grow into the formal
     issue/failure log agreed May 7: problem / status / fix / fixable-or-not, with
     evidence attachments. Crash records enforce the agreed minimums (photos +
     pilot's report + DataFlash log). Distinct from performed maintenance; component
     hours tracked from flight time; simple due-by reminders ("inspect after N hours").
-11. **Payload/attachment config.** Attachment database (spreader, camera, etc. with
+12. **Payload/attachment config.** Attachment database (spreader, camera, etc. with
     mass + notes); per-flight payload selection; flight card and analysis become
     mass-aware.
-12. **Wind correlation.** Wind (from site weather at log timestamps) overlaid on
-    flight analysis — the Mar 2 commitment, finally built.
-13. **Fleet dashboard.** Home page = fleet at a glance: recent flights, hours this
-    month, aircraft status, open squawks/issues.
-14. **Airframe history report.** One-click export per aircraft: identity + component
+13. **Wind correlation.** Wind (from site weather at log timestamps) overlaid on
+    flight analysis — the Mar 2 commitment, finally built. Privacy-compatible by
+    design: the wind lookup happens server-side at parse time using the private
+    GPS; only the resulting wind values (speed/direction/gusts) are stored on the
+    summary, so shared/sanitized views get wind without coordinates. Long game
+    (Thomas): the drone should eventually estimate wind onboard with no external
+    data — the tracker's wind-vs-log corpus is the **ground-truth dataset** for
+    building that. Another reason the crowdsourced store matters.
+14. **Fleet dashboard.** Home page = fleet at a glance: recent flights, hours this
+    month, aircraft status, open squawks/issues. Plus **per-type aggregates**
+    (Thomas): total flight hours across all Quiver drones, per-type fleet counts —
+    cheap rollups over flights × aircraft_types.
+15. **Airframe history report.** One-click export per aircraft: identity + component
     history + flights + maintenance + incidents + total hours, as JSON/PDF with a
     generated timestamp and content hash. This is the study's proof artifact
     ("first strategic milestone") — pulled forward from the generic P2 evidence
     exports because it's cheap once the event tables exist and it's what makes the
     strategic case testable.
+16. **Public read-only pages + bulk data export (PROMOTED from P2 — Thomas:
+    "pretty important").** Public fleet/flight pages, and bulk download of flight
+    logs **with filters** (aircraft type, attachment/payload, date range) so the
+    community can use the whole dataset to improve performance — PID changes,
+    parameter tuning. Serves *sanitized* logs only (GPS stripped) unless the
+    uploader opted their location public. This is the crowdsourced-data-store
+    pillar shipping as a feature.
+17. **API-token upload (PROMOTED from P2).** Committed per the QuiverHub sign-off
+    and Julius/Caribou answer: programmatic push so logs auto-upload from the
+    aircraft/ground-station side (QuiverHub or any other tool). Same pipeline,
+    same attribution (token → user), same privacy rules.
 
 ### P2 — later / nice-to-have
 
-- Public read-only pages (share a flight / fleet stats with community).
+- **Fleet reliability analytics** — the "how long can a Quiver motor run before
+  it's at risk of failure?" question, answered with real data: aggregate
+  component hours-at-removal/failure across the fleet (component_events × flights
+  × issues), per part_no/batch. The data model supports it from M0; the analytics
+  UI is P2 because it needs fleet-scale data to be meaningful. Feeds AIP-009
+  manufacturer scoring later.
 - Realtime "live" ops board (who's flying now) — probably premature; and live data
   is QuiverHub's side of the boundary anyway.
 - ULog/PX4 support (Quiver is ArduPilot; only if needed).
 - Pilot logbook export (per-pilot hours, CSV/PDF).
-- API tokens for programmatic upload (auto-upload from ground station / Hex /
-  QuiverHub push / Vector Discord-bot ingest for Julius's Caribou logs).
+- Vector Discord-bot ingest riding the P1 API path — fallback for Caribou logs if
+  Julius doesn't adopt the new web UI (Thomas expects he will).
 - **$ARROW rewards for uploads** — mechanics TBD, but P0's attribution model
   (created_by + checksum + timestamps) is designed to support it.
 - **Evidence exports beyond the airframe history report** — structured SORA/Part 108
@@ -250,8 +325,12 @@ not v2 build scope — noted here only so we don't re-derive them.
 ## Data model sketch (v2)
 
 ```
-user_profiles (id, name, role)
-sites (id, name, lat/lon, elevation, notes)
+user_profiles (id, name, role: admin|manufacturer|operator, gps_default_private bool)
+  -- GitHub OAuth or email via GoTrue; role decided 2026-08-09
+aircraft_operators (aircraft_id, user_id, granted_by, granted_at)
+  -- "operators have write access to aircraft they control" — this is the control
+  -- edge; RLS write policies check it. Manufacturer assigns at ship time.
+sites (id, name, lat/lon, elevation, notes, visibility: public|private)
 aircraft_types (id, name, class: multirotor|fixed_wing, cells, parser_profile jsonb)
   -- Quiver, Caribou (hex/18S), Spearhead, Kestrel; drives thresholds + battery math
 aircraft (id, serial UNIQUE, name, type_id, status, notes, photo, design_rev,
@@ -274,13 +353,15 @@ issues (aircraft_id, reporter, opened_at, severity, status, problem, fix,
 attachments_catalog (id, name, kind, mass_g, notes)  -- spreader, camera, ...
 flight_payloads (flight_id, attachment_id, qty)
 flights (id, aircraft_id, pilot_id, site_id, started_at, ended_at, title, notes,
-         created_by)
-  -- "flight" = v1 "leg"; drop the extra nesting unless multi-leg sessions prove needed
+         created_by, session_id NULL, gps_private bool)
+  -- "flight" = v1 "leg" — flatten DECIDED 2026-08-09; session_id groups a bulk-dump
+  -- day if ever needed. gps_private defaults from user_profiles, overridable per flight
 flight_tags (flight_id, tag_id)
 flight_notes (flight_id, author, type, body)
-flight_logs (flight_id, object_path, checksum UNIQUE, size, uploaded_by, uploaded_at,
-             status: uploaded|parsing|parsed|error)
-  -- attribution here is the $ARROW-rewards + governance foundation
+flight_logs (flight_id, object_path, sanitized_path NULL, checksum UNIQUE, size,
+             uploaded_by, uploaded_at, status: uploaded|parsing|parsed|error)
+  -- attribution here is the $ARROW-rewards + governance foundation;
+  -- sanitized_path = GPS-stripped copy written at parse time, served to non-owners
 flight_log_summary (log_id, duration, distance, max_alt, batt stats, health jsonb,
                     modes jsonb, wind jsonb)
 flight_log_series (log_id, channel, t[], v[])  -- downsampled; or parquet in storage
@@ -295,17 +376,18 @@ audit_log (id, table_name, row_id, action, actor, at, diff jsonb)  -- append-onl
   -- later (signed exports, attestation) builds on
 ```
 
-Open modeling question: keep flight→legs two-level (v1) or flatten to flights with a
-`session_id` grouping? Leaning flatten — v1's nesting is part of the clunk.
-
 ## Parser service (replaces edge fn)
 
-- Container on Openship, same box as Supabase. Node or Python (pymavlink is the
-  mature option; Hex already has working DataFlash extraction + health scoring code
-  patterns from the Carbon Cub work).
+- **Python + pymavlink (DECIDED — Thomas leans this way, 2026-08-09; Hex agrees).**
+  It's the mature DataFlash library, Hex already has working extraction + health
+  scoring patterns from the Carbon Cub work, and GPS-stripping a `.bin` for the
+  sanitized copy is far safer with a library that actually understands the message
+  framing. v1's TS `dataflash/` code becomes reference only. If a spike turns up a
+  blocker we revisit, but plan on pymavlink.
+- Container on Openship, same box as Supabase.
 - Contract: watches `flight_logs` rows with `status=uploaded` (pg LISTEN/NOTIFY or
-  poll), pulls from storage, writes summary/series/params rows, flips status.
-- Reuse v1's TS `dataflash/` extraction code if it's solid, else pymavlink.
+  poll), pulls from storage, writes summary/series/params rows + the sanitized log
+  copy, flips status. Bulk-dump batches are just N rows hitting the same queue.
 
 ## Milestones
 
@@ -313,12 +395,19 @@ Open modeling question: keep flight→legs two-level (v1) or flatten to flights 
   list renders.
 - **M1 — Core CRUD.** Aircraft, sites, flights quick-log, notes, tags. Usable as a
   manual logbook.
-- **M2 — Log pipeline.** Upload → parser service → flight card. The headline feature.
-- **M3 — Maps + plots + params.** Analysis UI.
+- **M2 — Log pipeline.** Upload (incl. bulk dump) → parser service → flight card +
+  sanitized copy. The headline feature.
+- **M3 — Maps + plots + params.** Analysis UI, GPS-privacy rules enforced in every
+  view, cross-user param comparison.
 - **M4 — Maintenance + dashboard + airframe history report.** The report closes the
   loop on the study's first strategic milestone: a real airframe with real history
-  producing an exportable record.
-- **M5 — Import + cutover.** Legacy import, redirect old app, archive.
+  producing an exportable record. Dashboard includes per-type aggregates.
+- **M5 — Import + cutover.** Legacy import (Quiver-devkit data only — Thomas,
+  2026-08-09; everything else including "JIS M-40" is skipped), redirect old app,
+  archive.
+- **M6 — Public data layer.** Public read-only pages, filtered bulk export,
+  API-token upload. After cutover so the public dataset launches with the imported
+  history in it.
 
 The study's 90-day roadmap (§6) maps cleanly onto these: study-M1 canonical data
 model = our M0, study-M2 identity workflow = our M1, study-M3 log attachment = our
@@ -334,26 +423,39 @@ query time from component_events × flights — no extra pipeline work.
    maintainer/reviewer role — so member auth for non-Arrow-staff is P0, and a
    reviewer-friendly view of *other people's* logs matters (fleet-visible RLS
    confirmed as the right call).
-2. Flatten legs → flights? (Hex says yes.)
-3. Parser language: reuse v1 TS dataflash code vs pymavlink port. Need a look at how
-   complete `dataflash/` actually is.
+2. ~~Flatten legs → flights?~~ **Answered (Thomas, 2026-08-09): yes.** Flattened.
+3. ~~Parser language?~~ **Answered (Thomas, 2026-08-09): pymavlink** ("probably
+   better, not certain") — decided above; a spike can falsify it cheaply.
 4. ~~Is maintenance tracking real usage or aspirational?~~ **Answered (Vector):**
    real — Erick files maintenance entries. Keep maintenance v2 at P1.
-5. Anything from v1 data worth NOT importing (test junk)? The unowned "JIS M-40"
-   aircraft + its log entry need an ownership decision at import time.
-6. How do we capture Julius/Caribou logs? He won't use the web UI — Discord-CDN
-   links rot. Part 2 tilts this toward **Vector-driven Discord-bot ingest** riding
-   the P2 API-token path (attribution built in, zero behavior change for Julius).
-   Needs a priority call: worth pulling forward to P1?
-7. **QuiverHub boundary** — proposed split above ("tracker = memory, QuiverHub =
-   nervous system"). Sign off, or loop in Alex?
-8. Payload/attachment DB scope for M-something: just mass + name (enough for
-   analysis), or full spreader-config detail from the granular work?
+5. ~~Anything from v1 not worth importing?~~ **Answered (Thomas, 2026-08-09):**
+   anything not from a Quiver devkit is skipped — which resolves "JIS M-40" too
+   (not devkit-attributable, not imported; the mystery record dies with v1).
+6. ~~How do we capture Julius/Caribou logs?~~ **Answered (Thomas, 2026-08-09):**
+   expectation is he'll use the new web UI; the API-token path (now P1) covers
+   auto-upload from the aircraft. Vector Discord-bot ingest stays as a P2 fallback.
+7. ~~QuiverHub boundary~~ **SIGNED OFF (Thomas, 2026-08-09)** — tracker = memory,
+   QuiverHub = one of many tools that push to it.
+8. ~~Payload/attachment DB scope?~~ **Answered (Thomas, 2026-08-09): mass + name
+   is probably ok.** Schema keeps a `notes` field; no structured spreader config
+   in v2.
 9. Is the issue/failure log P1 (with maintenance) or does the Gray battery
    incident / crash-record agreement justify pulling it into P0? It's cheap once
-   the tables exist.
+   the tables exist. **(Still open.)**
 10. Commit Vector's May 15 study into this repo's `docs/`? It's directly reusable
     (data model, roadmap, risk register) but contains funding/pricing material —
     depends on who can see this repo. Also: the study's funding/governance asks
     (§8) predate AIP-010 and the treasury sale; if v2 wants Arrow funding, that
-    section needs a refresh before anyone cites it.
+    section needs a refresh before anyone cites it. **(Still open.)**
+11. **GPS privacy defaults + mechanics (NEW).** Default private with opt-in-public,
+    or default public with opt-out? Per-user default with per-flight override is
+    the schema assumption (`gps_default_private` + `flights.gps_private`) — Hex
+    recommends **default private**: safest for adoption, and the bulk-download
+    dataset stays useful (params, battery, vibe, wind, performance) without
+    coordinates. Also: do admins see raw GPS? (Assumed yes — flight-test review
+    needs it. Confirm.)
+12. **Who holds `manufacturer` at launch, and how do existing devkit aircraft get
+    born (NEW)?** Under manufacturer-only aircraft creation, imported v1 devkit
+    aircraft need a manufacturer-side creation event + operator assignment (Erick
+    et al.) at import time. Who is "manufacturer" day one — Arrow the org (a
+    couple of accounts), or per-entity? Affects M0 seed data + M5 import script.
