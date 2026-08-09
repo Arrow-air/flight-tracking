@@ -98,8 +98,8 @@ branch **`overnight/p0`** (NO push — Thomas reviews first), writes
 2. ~~Legacy Supabase creds~~ **RECEIVED 2026-08-09.** Full v1 backup taken
    same day (`backups/`: public + auth/storage dumps, all 199 storage
    objects ≈ 4.6 GB). Import phase runs against the restored dump — the run
-   never touches the live project. Post-migration: rotate the v1 DB password
-   (it transited Discord).
+   never touches the live project. Creds were shared privately;
+   no rotation urgency (optional hygiene at cutover).
 
 ## Ground-truth pack (written before launch)
 
