@@ -1,8 +1,7 @@
 # Flight Tracking v2 — Planning Doc
 
-**Status:** DRAFT v2 — Thomas's first review round (2026-08-09) folded in: roles
-model decided, GPS privacy added, bulk upload added, public data layer promoted,
-flatten + pymavlink decided. Open questions down to Q9–Q12.
+**Status:** SCOPE LOCKED (2026-08-09) — both of Thomas's review rounds folded in.
+All open questions (Q1–Q12) answered. Next step: sequence M0 and start dev.
 **Vector input:** COMPLETE (2026-08-08) — parts 1 + 2 and the full May 15 strategy
 study (Vector's critique doc) all folded in. Study source:
 `flight-tracker-strategy-may2026-vector-critique.md` (kept in Hex's workspace
@@ -184,6 +183,14 @@ feature (promoted to P1 below), not a nice-to-have.
 ## v2 architecture (decided)
 
 - **Frontend:** Vue 3 + Vite + TS SPA (scaffold live at flights.arrowair.com).
+  **Styling (Thomas, 2026-08-09): match the Arrow docs whenever practical.** The
+  docs theme lives in the `website` repo (`src/css/custom.css`) — port its tokens
+  into the SPA's base stylesheet rather than eyeballing it: docs primary `#0843BF`
+  (borders `#D0D9F3`/`#b1c0ec`, light bg `rgba(8,67,191,0.08)`), brand dark
+  `#060528`, navbar `#072a80`, neutrals `#1f2937`/`#4b5563`/`#6b7280`; fonts Neue
+  Haas Grotesk (text) + JetBrains Mono / Departure Mono (code/accents). "Whenever
+  practical" = data-dense views (plots, tables, maps) get functional treatment,
+  but chrome, typography, colors, and nav feel read as Arrow docs.
 - **Backend:** self-hosted Supabase at supabase.arrowair.com (Postgres 17, GoTrue,
   PostgREST, Realtime, Storage).
 - **Parser:** standalone container service on Openship (Arrow Prod box, lots of
@@ -210,15 +217,16 @@ feature (promoted to P1 below), not a nice-to-have.
      aircraft.
    Fleet-visible reads for authenticated users stays (fixes v1's own-rows-only
    weirdness), with the GPS-privacy carve-out below.
-2. **GPS/location privacy (NEW — Thomas, 2026-08-09).** People won't want their
-   flight locations public. Uploader's GPS data stays visible to them (and admins);
-   it is **stripped when anyone else downloads the log** or views derived products.
-   Design approach: parser writes a *sanitized* log copy (GPS/POS/GPA messages
-   removed) at parse time — stripping a `.bin` on the fly per-download is fragile;
-   pre-generating the sanitized artifact is cheap and cacheable. Derived data
-   (map tracks, home points, site links) carries the same visibility rule. Distance/
-   speed/altitude summaries survive sanitization (relative values, no coordinates).
-   Open: default private vs opt-in, per-user vs per-flight (Q11).
+2. **GPS/location privacy (DECIDED — Thomas, 2026-08-09).** **Private by
+   default**; admins can view raw GPS (flight-test review needs it). Uploader's
+   GPS stays visible to them; **everyone else — including bulk dataset
+   downloads — gets the sanitized `.bin` with location messages actually stripped
+   from the log**, not just hidden in the UI. Parser writes the sanitized copy
+   (GPS/POS/GPA/ORGN messages removed) at parse time — stripping on the fly
+   per-download is fragile; pre-generating the artifact is cheap and cacheable.
+   Derived data (map tracks, home points, site links) carries the same visibility
+   rule. Distance/speed/altitude summaries survive sanitization (relative values,
+   no coordinates). Per-user default + per-flight override in schema.
 3. **Aircraft registry.** Fleet list + aircraft detail page: serial, type, name,
    status (active/maintenance/retired), photo. Cumulative stats (total flights, hours)
    derived from flight data. Type-aware from day one (Quiver, Caribou hex/18S,
@@ -439,23 +447,20 @@ query time from component_events × flights — no extra pipeline work.
 8. ~~Payload/attachment DB scope?~~ **Answered (Thomas, 2026-08-09): mass + name
    is probably ok.** Schema keeps a `notes` field; no structured spreader config
    in v2.
-9. Is the issue/failure log P1 (with maintenance) or does the Gray battery
-   incident / crash-record agreement justify pulling it into P0? It's cheap once
-   the tables exist. **(Still open.)**
-10. Commit Vector's May 15 study into this repo's `docs/`? It's directly reusable
-    (data model, roadmap, risk register) but contains funding/pricing material —
-    depends on who can see this repo. Also: the study's funding/governance asks
-    (§8) predate AIP-010 and the treasury sale; if v2 wants Arrow funding, that
-    section needs a refresh before anyone cites it. **(Still open.)**
-11. **GPS privacy defaults + mechanics (NEW).** Default private with opt-in-public,
-    or default public with opt-out? Per-user default with per-flight override is
-    the schema assumption (`gps_default_private` + `flights.gps_private`) — Hex
-    recommends **default private**: safest for adoption, and the bulk-download
-    dataset stays useful (params, battery, vibe, wind, performance) without
-    coordinates. Also: do admins see raw GPS? (Assumed yes — flight-test review
-    needs it. Confirm.)
-12. **Who holds `manufacturer` at launch, and how do existing devkit aircraft get
-    born (NEW)?** Under manufacturer-only aircraft creation, imported v1 devkit
-    aircraft need a manufacturer-side creation event + operator assignment (Erick
-    et al.) at import time. Who is "manufacturer" day one — Arrow the org (a
-    couple of accounts), or per-entity? Affects M0 seed data + M5 import script.
+9. ~~Issue/failure log P0 or P1?~~ **Answered (Thomas, 2026-08-09): stays P1**
+   (ships with Maintenance v2).
+10. ~~Commit Vector's May 15 study into this repo?~~ **Answered (Thomas,
+    2026-08-09): no.** Stays out of the repo; source copy lives in Hex's
+    workspace `downloads/`.
+11. ~~GPS privacy defaults + mechanics?~~ **Answered (Thomas, 2026-08-09):
+    private by default; admins can view raw GPS.** And explicitly: bulk `.bin`
+    dataset downloads must serve logs with location data *actually stripped from
+    the file* — the sanitized-copy pipeline is the committed approach, not
+    UI-level hiding. Folded into P0 item 2.
+12. ~~Who holds `manufacturer` at launch?~~ **Answered (Thomas, 2026-08-09):
+    Thomas + Julius.** Thomas manufactured every devkit except the one Julius
+    has (Julius built his own). M5 import: aircraft creation attributed to
+    Thomas (or Julius for his Caribou/devkit), operators assigned per current
+    ownership (Erick et al.).
+
+**All questions answered — scope is locked.**
