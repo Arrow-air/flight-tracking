@@ -4,3 +4,6 @@ dist/
 .env.local
 *.local
 .DS_Store
+fixtures/
+parser/.venv/
+run/RUNID
