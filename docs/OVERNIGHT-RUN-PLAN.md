@@ -95,9 +95,11 @@ branch **`overnight/p0`** (NO push — Thomas reviews first), writes
 1. **GitHub OAuth app** — Thomas creates it on the Arrow-air org (2-min task;
    callback URL will be in RUN-RESULT.md); until then GitHub login is wired
    but dark, email auth fully live. Not a blocker for the run.
-2. **Legacy Supabase creds** — for executing the real v1 import (script ships
-   tested regardless). Drop them before tonight → import lands staged;
-   otherwise it's a 30-min morning follow-up.
+2. ~~Legacy Supabase creds~~ **RECEIVED 2026-08-09.** Full v1 backup taken
+   same day (`backups/`: public + auth/storage dumps, all 199 storage
+   objects ≈ 4.6 GB). Import phase runs against the restored dump — the run
+   never touches the live project. Post-migration: rotate the v1 DB password
+   (it transited Discord).
 
 ## Ground-truth pack (written before launch)
 

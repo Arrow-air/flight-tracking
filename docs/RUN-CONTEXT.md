@@ -120,14 +120,30 @@ error); flight card page; auth screens (email live; GitHub OAuth button wired
 behind config flag — no secret exists yet); role-aware UI (hide aircraft-create
 from non-manufacturers, etc.).
 
-## Import (`scripts/import/`)
+## Import (`scripts/import/`) — REAL v1 DATA AVAILABLE (backed up 2026-08-09)
 
-v1 (project-flight-tracking hosted Supabase) → v2 schema. Quiver-devkit data
-only — skip everything else including the unowned "JIS M-40" aircraft.
-Aircraft creation attributed to Thomas (Julius for his own devkit); operator
-assignments from v1 ownership. Legacy creds are NOT available tonight:
-build + test against a synthetic fixture dump (`scripts/import/fixtures/`)
-shaped like the v1 schema (v1 repo has the schema). Real run is a follow-up.
+v1 (project-flight-tracking hosted Supabase) → v2 schema. A full backup of
+the REAL v1 project sits in `backups/` (gitignored):
+- `v1-public-20260809.dump` — public schema, pg_dump custom format (9 tables:
+  13 aircraft, 193 flight_legs, 197 flight_leg_logs, 18 maintenance entries,
+  94 flight_notes, 17 user_profiles, tags empty).
+- `v1-auth-storage-data-20260809.dump` — auth.users + storage.objects data.
+- `v1-storage-flight_logs/` — all 199 storage objects (~4.6 GB, the actual
+  uploaded `.bin` logs, laid out `<leg-or-user-uuid>/<uuid>_<name>.bin`).
+
+NEVER connect to the live hosted project (creds exist in Hex's `.secrets/`
+but are OFF-LIMITS to this run). Source of truth = restore the dumps into a
+local Docker Postgres container (e.g. `v1source`).
+
+Rules: Quiver-devkit data only — skip everything else INCLUDING the unowned
+"JIS M-40" aircraft (it is present in the real 13; the import must skip it
+with an explicit skip-report entry). Aircraft creation attributed to Thomas
+(Julius for his own devkit); operator assignments from v1 ownership. Import
+stages log files from `backups/v1-storage-flight_logs/` into local v2
+storage with `status='uploaded'` (the parser queue may chew the backlog;
+the import gate does NOT require all 199 parsed — verify staging by checksum
+spot-check of ≥10 files). Must be idempotent (re-run = no dupes; checksum
+UNIQUE helps).
 
 ## Verdict discipline
 

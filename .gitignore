@@ -7,3 +7,4 @@ dist/
 fixtures/
 parser/.venv/
 run/RUNID
+backups/

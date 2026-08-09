@@ -196,11 +196,11 @@ const importR = await buildLoop({
   phase: 'Import',
   cap: 4,
   allowPlateau: false,
-  builderPrompt: `Build scripts/import/ per RUN-CONTEXT "Import": mapping doc (v1 schema → v2, from the read-only v1 repo), import script, synthetic v1 fixture dump (scripts/import/fixtures/) with Quiver-devkit rows AND rows that must be skipped (non-devkit aircraft, the "JIS M-40" pattern). Only touch scripts/import/.`,
+  builderPrompt: `Build scripts/import/ per RUN-CONTEXT "Import" — REAL v1 data is in backups/ (dumps + 199 storage objects). Restore the dumps into a local Docker Postgres container (v1source) — NEVER touch the live hosted project. Deliver: mapping doc (v1 schema → v2), import script (v1source → local v2 DB + storage staging from backups/v1-storage-flight_logs/ with status='uploaded'), devkit-only filter with explicit skip-report (JIS M-40 must appear in it), manufacturer attribution (Thomas; Julius for his own devkit), operator assignments from v1 ownership, idempotency. Only touch scripts/import/.`,
   critics: [
     {
       label: 'gate',
-      prompt: `Run the import dry-run against the synthetic fixture into the local DB (fresh reset first). Assert: devkit data lands with correct manufacturer attribution (Thomas; Julius for his own) + operator assignments; non-devkit rows and JIS M-40 are skipped with a skip-report; re-running is idempotent. Evidence: row counts in/out/skipped.`,
+      prompt: `Run the import against the restored REAL v1 dump into a fresh local v2 DB (supabase db reset first). Assert: devkit aircraft/flights/maintenance land with correct attribution + operator assignments; non-devkit rows and JIS M-40 are skipped and listed in the skip-report; staged log files match source checksums (spot-check ≥10); re-running produces zero duplicates. Evidence: row counts in/out/skipped per table, checksum results.`,
     },
   ],
 })
