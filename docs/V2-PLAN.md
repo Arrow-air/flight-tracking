@@ -183,14 +183,17 @@ feature (promoted to P1 below), not a nice-to-have.
 ## v2 architecture (decided)
 
 - **Frontend:** Vue 3 + Vite + TS SPA (scaffold live at flights.arrowair.com).
-  **Styling (Thomas, 2026-08-09): match the Arrow docs whenever practical.** The
-  docs theme lives in the `website` repo (`src/css/custom.css`) — port its tokens
-  into the SPA's base stylesheet rather than eyeballing it: docs primary `#0843BF`
-  (borders `#D0D9F3`/`#b1c0ec`, light bg `rgba(8,67,191,0.08)`), brand dark
-  `#060528`, navbar `#072a80`, neutrals `#1f2937`/`#4b5563`/`#6b7280`; fonts Neue
-  Haas Grotesk (text) + JetBrains Mono / Departure Mono (code/accents). "Whenever
-  practical" = data-dense views (plots, tables, maps) get functional treatment,
-  but chrome, typography, colors, and nav feel read as Arrow docs.
+  **Styling (Thomas, 2026-08-09): match the Arrow docs UI/UX in general, not
+  just colors — whenever practical.** The reference implementation is the
+  `website` repo (Docusaurus): port its design language wholesale — tokens from
+  `src/css/custom.css` (docs primary `#0843BF`, borders `#D0D9F3`/`#b1c0ec`,
+  brand dark `#060528`, navbar `#072a80`, neutrals `#1f2937`/`#4b5563`/`#6b7280`;
+  Neue Haas Grotesk text, JetBrains Mono / Departure Mono code/accents) *plus*
+  its layout and interaction patterns: fixed top navbar, left sidebar nav,
+  card grids, table styling, breadcrumbs, spacing rhythm, link/hover behavior.
+  The tracker should feel like another Arrow docs surface that happens to be an
+  app. "Whenever practical" = data-dense views (plots, maps) get functional
+  treatment inside that chrome.
 - **Backend:** self-hosted Supabase at supabase.arrowair.com (Postgres 17, GoTrue,
   PostgREST, Realtime, Storage).
 - **Parser:** standalone container service on Openship (Arrow Prod box, lots of
