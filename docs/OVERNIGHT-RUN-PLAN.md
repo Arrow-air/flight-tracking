@@ -92,9 +92,12 @@ branch **`overnight/p0`** (NO push — Thomas reviews first), writes
 
 ## External dependencies (the only P0 asterisks)
 
-1. **GitHub OAuth app** — Thomas creates it on the Arrow-air org (2-min task;
-   callback URL will be in RUN-RESULT.md); until then GitHub login is wired
-   but dark, email auth fully live. Not a blocker for the run.
+1. ~~GitHub OAuth app~~ **RECEIVED 2026-08-09** (Arrow-air org app, creds in
+   Hex's `.secrets/flight-tracking-github-oauth.json`; callback →
+   `supabase.arrowair.com/auth/v1/callback`). The SECRET never enters this
+   repo — run agents wire env-var placeholders only; real values go into
+   GoTrue env at deploy. Callback points at prod, so the login flow
+   end-to-ends after the Openship deploy, not against local supabase.
 2. ~~Legacy Supabase creds~~ **RECEIVED 2026-08-09.** Full v1 backup taken
    same day (`backups/`: public + auth/storage dumps, all 199 storage
    objects ≈ 4.6 GB). Import phase runs against the restored dump — the run

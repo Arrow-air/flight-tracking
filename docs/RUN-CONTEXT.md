@@ -117,8 +117,13 @@ Open-Meteo weather auto-fill from log timestamp + site coords — keyless API);
 bulk-dump intake (drop N `.BIN`s → N flight stubs from log timestamps, batch
 defaults, editable later); upload status per log (uploaded/parsing/parsed/
 error); flight card page; auth screens (email live; GitHub OAuth button wired
-behind config flag — no secret exists yet); role-aware UI (hide aircraft-create
-from non-manufacturers, etc.).
+behind config flag — a real OAuth app EXISTS (client ID `Ov23liqSDMPkyBhht5hG`,
+callback `https://supabase.arrowair.com/auth/v1/callback`) but its SECRET lives
+only in Hex's `.secrets/` and must NEVER be written into this repo: committed
+files reference env vars (`GOTRUE_EXTERNAL_GITHUB_*`, a VITE feature flag)
+with placeholders. Callback targets prod, so do NOT try to end-to-end GitHub
+login against local supabase — assert flag/button wiring only); role-aware UI
+(hide aircraft-create from non-manufacturers, etc.).
 
 ## Import (`scripts/import/`) — REAL v1 DATA AVAILABLE (backed up 2026-08-09)
 
