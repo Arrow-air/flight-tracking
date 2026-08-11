@@ -240,10 +240,42 @@ const red = await parallel([
     ),
 ])
 
+// ---------- Phase 6b: Remediation (find -> FIX -> re-verify, not terminal) ----------
+// A red-team pass that can emit blockers must never flow straight to packaging
+// unfixed (the original P0 run shipped with 3 open findings because Package ran
+// unconditionally after Red Team). This loop fixes every blocker/major the red
+// team raised, then an independent re-attack agent confirms each is closed;
+// it repeats until clean or the cap, and reports honestly if any survive.
+const redValid = red.filter(Boolean)
+const redFindings = redValid.flatMap(v => v.issues.filter(i => i.severity !== 'minor'))
+let remediation = { attempted: false, exit: 'none', openAfter: redFindings.length }
+if (redFindings.length) {
+  phase('Remediation')
+  log(`Red team raised ${redFindings.length} blocker/major finding(s) — remediation loop`)
+  let open = redFindings
+  let rround = 0
+  const rcap = 3
+  while (open.length && rround < rcap) {
+    rround++
+    await agent(
+      `${PREAMBLE}\n\nROLE: security remediation engineer, round ${rround}. The red team found these blocker/major issues (in docs/RISK-REGISTER.md):\n${open.map(i => `- [${i.severity}] ${i.description}${i.file ? ` (${i.file})` : ''}`).join('\n')}\nFix EVERY one at the root (schema/RLS/policy/code). Prefer a new forward migration in supabase/migrations/ over editing an applied one; apply it to the running local DB. For each fix, reproduce the ORIGINAL attack against the seeded DB and confirm it is now blocked, and confirm the legitimate path still works (no over-blocking). Write docs/build-logs/remediation-r${rround}.md with the before/after attack output for each finding. Do NOT git commit.`,
+      { label: `remediation:fix:r${rround}`, phase: 'Remediation', schema: SUMMARY },
+    )
+    const reverify = await agent(
+      `${PREAMBLE}\n\nROLE: independent red-team RE-ATTACK, round ${rround}. Do NOT trust the remediation log. Re-run every blocker/major attack from docs/RISK-REGISTER.md yourself against the running stack (RLS as the appropriate non-owner role, storage PUTs, PostgREST). For EACH finding return an issue only if it is STILL exploitable; evidence must be the actual attack commands and observed result. pass=true ONLY if zero blocker/major findings remain exploitable.`,
+      { label: `remediation:reverify:r${rround}`, phase: 'Remediation', schema: VERDICT },
+    )
+    open = reverify ? reverify.issues.filter(i => i.severity !== 'minor') : open
+    log(`Remediation r${rround}: ${open.length} blocker/major still open`)
+    if (reverify && reverify.pass && !open.length) break
+  }
+  remediation = { attempted: true, rounds: rround, exit: open.length ? 'incomplete' : 'clean', openAfter: open.length }
+}
+
 // ---------- Phase 7: Package ----------
 phase('Package')
 const pkg = await agent(
-  `${PREAMBLE.replace('Do NOT git commit or push — write files only.', '')}\n\nROLE: packager. You are the ONLY agent allowed to commit. (1) Ensure supabase stack + parser stopped cleanly. (2) git status review: everything intended, nothing stray (fixtures/ and parser/.venv must be gitignored — fix .gitignore if needed). (3) Commit ALL work to branch overnight/p0 in logical commits (design system / schema+tests / parser / UI / import / docs). DO NOT PUSH. (4) Write ${REPO}/RUN-RESULT.md: per-phase outcomes with rounds + final scores + gate evidence numbers, red-team summary, the P0 coverage map with per-item status, external-dep TODOs (GitHub OAuth secret, legacy creds), and a "morning review path" (commands for Thomas: checkout branch, supabase start, npm run dev, parser watcher, styleguide + screenshots to look at). Include paths to the best comparison screenshots.`,
+  `${PREAMBLE.replace('Do NOT git commit or push — write files only.', '')}\n\nROLE: packager. You are the ONLY agent allowed to commit. (1) Ensure supabase stack + parser stopped cleanly. (2) git status review: everything intended, nothing stray (fixtures/ and parser/.venv must be gitignored — fix .gitignore if needed). (3) Commit ALL work to branch overnight/p0 in logical commits (design system / schema+tests / parser / UI / import / remediation / docs). DO NOT PUSH. (4) Write ${REPO}/RUN-RESULT.md: per-phase outcomes with rounds + final scores + gate evidence numbers, red-team summary AND the remediation outcome (${JSON.stringify(remediation)} — state clearly whether every blocker/major was fixed-and-reverified or if any remain open), the P0 coverage map with per-item status, external-dep TODOs (GitHub OAuth secret, legacy creds), and a "morning review path" (commands for Thomas: checkout branch, supabase start, npm run dev, parser watcher, styleguide + screenshots to look at). Include paths to the best comparison screenshots. If remediation.exit is 'incomplete', put a LOUD "NOT READY TO DEPLOY" banner at the top.`,
   { label: 'package', phase: 'Package', schema: SUMMARY },
 )
 
@@ -254,5 +286,6 @@ return {
   ui: ui && { exit: ui.exit, rounds: ui.rounds },
   import: importR && { exit: importR.exit, rounds: importR.rounds },
   redTeam: red.filter(Boolean).map(v => ({ pass: v.pass, score: v.score, issues: v.issues.length })),
+  remediation,
   packaged: pkg && pkg.done,
 }
