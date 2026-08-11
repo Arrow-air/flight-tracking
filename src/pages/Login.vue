@@ -16,6 +16,7 @@ import {
   signInWithGitHub,
   signUpWithEmail,
 } from '../lib/auth';
+import { consumeOAuthCallbackError } from '../lib/oauthCallback';
 // A3: real brand lockup (arrowair.com/img/brand/SVGs/) — darkblue variant
 // (#0943bf on transparent) for the white login panel.
 import lockupDarkblue from '../assets/brand/arrow-lockup-darkblue.svg';
@@ -32,6 +33,11 @@ const name = ref('');
 const busy = ref(false);
 const error = ref('');
 const notice = ref('');
+
+// A1: a denied/failed GitHub OAuth attempt bounces back here via the router
+// guard — surface the error GoTrue put in the callback URL (one-shot).
+const oauthError = consumeOAuthCallbackError();
+if (oauthError) error.value = `GitHub sign-in failed: ${oauthError}`;
 
 function switchMode(m: Mode) {
   mode.value = m;

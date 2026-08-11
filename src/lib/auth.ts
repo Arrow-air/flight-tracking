@@ -10,6 +10,10 @@
 import type { Session } from '@supabase/supabase-js';
 import { computed, reactive } from 'vue';
 import type { Profile } from './db';
+// Imported for its module side effect: captures a failed-OAuth callback
+// error from the URL at bootstrap, before router/supabase-js rewrite it.
+// Login.vue reads it via consumeOAuthCallbackError().
+import './oauthCallback';
 import { supabase } from './supabase';
 
 export const githubEnabled =
