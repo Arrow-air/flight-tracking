@@ -96,6 +96,9 @@ async function login(page, email, password) {
     await page.goto(`${BASE}/sites`);
     await page.locator('[data-test="new-site"]').click();
     await page.getByLabel('Name').fill(siteName);
+    // Post-redteam RLS: private sites are invisible to non-owners, so the
+    // operator path below needs this site to be public.
+    await page.getByLabel('Visibility').selectOption('public');
     await page.getByLabel('Latitude').fill('27.5');
     await page.getByLabel('Longitude').fill('-98.1');
     await page.getByRole('button', { name: 'Create site' }).click();
