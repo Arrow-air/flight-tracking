@@ -155,8 +155,10 @@ def parse_log(path: str, cells: int | None = None) -> dict[str, Any]:
     mah_used = None
     energy_wh = None
 
-    # gps
+    # gps — first_fix/last_fix hold PRECISE coords and must stay local to
+    # this function; only the round(2) takeoff values below may be emitted.
     dist_m = 0.0
+    first_fix = None
     last_fix = None
     max_speed = None
     gps_max_alt = None
@@ -235,6 +237,8 @@ def parse_log(path: str, cells: int | None = None) -> dict[str, Any]:
                 if first_ts_unix is None:
                     first_ts_unix = getattr(m, "_timestamp", None)
                 if lat is not None and lng is not None and (lat or lng):
+                    if first_fix is None:
+                        first_fix = (lat, lng)
                     if last_fix is not None:
                         d = _haversine_m(last_fix[0], last_fix[1], lat, lng)
                         if d < 500:  # glitch guard
@@ -452,6 +456,11 @@ def parse_log(path: str, cells: int | None = None) -> dict[str, Any]:
         "max_alt_source": ("baro" if baro_max is not None
                            else ("gps" if gps_agl is not None else None)),
         "max_speed_ms": round(max_speed, 2) if max_speed is not None else None,
+        # D1 PRIVACY: takeoff coords are COARSE — rounded to 2 decimal places
+        # (~1.1 km) here, before they leave the parser. flight_log_summary is
+        # fleet-visible under RLS, so nothing more precise may be emitted.
+        "takeoff_lat": round(first_fix[0], 2) if first_fix else None,
+        "takeoff_lon": round(first_fix[1], 2) if first_fix else None,
         "start_time_utc": first_ts_unix,
         "vehicle": vehicle,
         "battery": battery,

@@ -1,0 +1,6 @@
+# Dev/test-only deps — NOT installed in the Docker image (parser/Dockerfile
+# installs requirements.txt only). Install into parser/.venv:
+#   parser/.venv/bin/python -m pip install -r parser/requirements-dev.txt
+# Run tests: cd parser && .venv/bin/python -m pytest
+-r requirements.txt
+pytest>=9.1
