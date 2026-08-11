@@ -17,7 +17,7 @@ git rev-parse --verify overnight/p0 >/dev/null 2>&1 || git branch overnight/p0
 git checkout overnight/p0
 
 LAUNCH_TS=$(date +%s)
-CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 nohup caffeinate -i claude -p --dangerously-skip-permissions --model claude-fable-5 "You are a headless host process for the flight-tracking P0 workflow. Your ONLY job: (1) Invoke the Workflow tool with exactly {\"scriptPath\": \"$SCRIPT\"}. (2) Stay alive waiting for the workflow completion notification — do not exit, do not do other work, do not edit files in $REPO (the workflow agents own them). (3) When the workflow completes: write its return value and a phase-by-phase summary to $RESULT. Do not commit, do not push (the workflow's packager agent commits). If the Workflow tool errors on invocation, relaunch it ONCE passing resumeFromRunId from the error/result; if it fails twice, write the error to $RESULT and stop." > /tmp/ft-p0-host-L0.log 2>&1 &
+CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 nohup caffeinate -i claude -p --dangerously-skip-permissions --model claude-fable-5 "You are a headless host process for the flight-tracking P0 workflow. Your ONLY job: (1) Invoke the Workflow tool with exactly {\"scriptPath\": \"$SCRIPT\"}. (2) Stay alive waiting for the workflow completion notification — do not exit, do not do other work, do not edit files in $REPO (the workflow agents own them). (3) When the workflow completes: write its return value and a phase-by-phase summary to $RESULT. Do not commit, do not push (the workflow's packager agent commits). If the Workflow tool errors on invocation, write the error to $RESULT and stop." > /tmp/ft-p0-host-L0.log 2>&1 &
 HOSTPID=$!
 echo "host launched pid $HOSTPID — waiting 120s to verify the workflow started"
 sleep 120

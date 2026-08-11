@@ -16,7 +16,7 @@ export const meta = {
 const REPO = '/Users/hex/projects/arrow/flight-tracking'
 const CTX = `${REPO}/docs/RUN-CONTEXT.md`
 const PLAN = `${REPO}/docs/V2-PLAN.md`
-const PREAMBLE = `You are one agent in an overnight build run. FIRST read ${CTX} (hard rules + facts) and skim ${PLAN}. Never invent facts; label assumptions. Do NOT git commit or push — write files only. Work only inside ${REPO} (reference paths in RUN-CONTEXT are read-only).`
+const PREAMBLE = `You are one agent in an overnight build run. FIRST read ${CTX} (hard rules + facts) and skim ${PLAN}. Never invent facts; label assumptions. Do NOT git commit or push — write files only. Work only inside ${REPO} (reference paths in RUN-CONTEXT are read-only). RELAUNCH AWARENESS: this run may be a relaunch after an interruption (session caps kill hosts mid-run) — the repo may already contain partial or complete work for your phase. Read docs/build-logs/ for your phase and inspect the actual files BEFORE working; keep and repair existing work, never restart a phase from scratch when prior rounds exist.`
 
 const VERDICT = {
   type: 'object',
@@ -58,6 +58,20 @@ function issueList(verdicts) {
 // round. Exits when all critics pass, or on plateau (2 rounds without total
 // score improvement) if allowPlateau, or at cap.
 async function buildLoop({ name, phase, builderPrompt, critics, cap, allowPlateau }) {
+  // Relaunch cheapness: a phase that passed its critics stamps a marker; on
+  // relaunch a one-shot probe sees it and the whole loop is skipped. Without
+  // this, every session-limit relaunch re-runs completed phases fresh
+  // (cross-session workflow resume does NOT restore its cache — measured on
+  // the quiver-dock rev-2 run, 2026-08-09).
+  const marker = `${REPO}/docs/build-logs/${name}.PASSED`
+  const probe = await agent(
+    `Run exactly: cat ${marker} 2>/dev/null. If the file exists return {"done": true, "notes": "<its content>"}; if it does not exist return {"done": false, "notes": "absent"}. Nothing else.`,
+    { label: `${name}:probe`, phase, schema: SUMMARY, effort: 'low' },
+  )
+  if (probe && probe.done) {
+    log(`${name}: PASSED marker present (${probe.notes}) — skipping phase`)
+    return { rounds: 0, verdicts: [], exit: 'pass' }
+  }
   let round = 0
   let issues = ''
   let best = -1
@@ -66,7 +80,7 @@ async function buildLoop({ name, phase, builderPrompt, critics, cap, allowPlatea
   while (round < cap) {
     round++
     await agent(
-      `${PREAMBLE}\n\nROLE: builder for ${name}, round ${round}.\n${builderPrompt}\n${issues ? `Open issues from the previous round's critics — fix ALL blockers and majors:\n${issues}` : 'First round: build from scratch per the spec.'}\nWrite a round log to ${REPO}/docs/build-logs/${phase.toLowerCase().replace(/ /g, '-')}-r${round}.md (what you did, what remains).`,
+      `${PREAMBLE}\n\nROLE: builder for ${name}, round ${round}.\n${builderPrompt}\n${issues ? `Open issues from the previous round's critics — fix ALL blockers and majors:\n${issues}` : 'First round of this launch: inspect existing state first (docs/build-logs/ and the files themselves); if prior work exists, continue and repair it per the spec — otherwise build from scratch.'}\nWrite a round log to ${REPO}/docs/build-logs/${phase.toLowerCase().replace(/ /g, '-')}-r${round}.md (what you did, what remains).`,
       { label: `${name}:build:r${round}`, phase, schema: SUMMARY },
     )
     lastVerdicts = (await parallel(
@@ -80,7 +94,13 @@ async function buildLoop({ name, phase, builderPrompt, critics, cap, allowPlatea
     const total = lastVerdicts.reduce((s, v) => s + v.score, 0)
     const allPass = lastVerdicts.length === critics.length && lastVerdicts.every(v => v.pass)
     log(`${name} r${round}: total ${total}, pass ${allPass}`)
-    if (allPass) return { rounds: round, verdicts: lastVerdicts, exit: 'pass' }
+    if (allPass) {
+      await agent(
+        `Run exactly: mkdir -p ${REPO}/docs/build-logs && echo "passed at round ${round}, total score ${total}" > ${marker} && cat ${marker}. Return {"done": true, "notes": "<the cat output>"}.`,
+        { label: `${name}:stamp`, phase, schema: SUMMARY, effort: 'low' },
+      )
+      return { rounds: round, verdicts: lastVerdicts, exit: 'pass' }
+    }
     if (total <= best) {
       flat++
       if (allowPlateau && flat >= 2) return { rounds: round, verdicts: lastVerdicts, exit: 'plateau' }
