@@ -1,0 +1,145 @@
+{
+  "generated_at": "2026-08-11T02:47:09.359Z",
+  "aircraft": [
+    {
+      "v1_id": "f661f386-d64f-4252-a334-0eb7e9ac5670",
+      "serial": "SPH-STRK-TR01A",
+      "name": "Spearhead Testbed - Stork VTOL",
+      "aircraft_type": "Stork VTOL",
+      "owner": "alperenag",
+      "reason": "aircraft_type \"Stork VTOL\" is not Quiver-devkit data (filter: /^Quiver/)",
+      "skipped_flight_legs": 2,
+      "skipped_leg_logs": 2,
+      "skipped_flight_notes": 0,
+      "skipped_maintenance": 1
+    },
+    {
+      "v1_id": "367d45f7-d81a-4aad-bf1e-0d635adc71a1",
+      "serial": "NA",
+      "name": "Jis M40",
+      "aircraft_type": "QuadCopter",
+      "owner": "As Balcerak",
+      "reason": "JIS M-40 (\"Jis M40\", serial \"NA\") — explicitly excluded by Thomas (2026-08-09): not devkit-attributable; the mystery record dies with v1.",
+      "skipped_flight_legs": 0,
+      "skipped_leg_logs": 0,
+      "skipped_flight_notes": 0,
+      "skipped_maintenance": 1
+    }
+  ],
+  "flight_logs": [
+    {
+      "v1_id": "038c6a26-6047-4283-a1b8-e7d054b24113",
+      "flight_leg_id": "bd1b6a72-23eb-4c8a-80aa-239f2c072ca1",
+      "filename": "00000091.bin",
+      "checksum": "92366301626f8a93b3e7f23b71deafc12f180942f35b838cab143ca9d4b4f824",
+      "reason": "duplicate checksum — same physical file already imported as v1 log 19da6772-cee7-48f2-b402-c4afb6a68bb9 (leg a72173f3-6ccf-464b-bed6-edc5cd03c436); v2 flight_logs.checksum is UNIQUE"
+    },
+    {
+      "v1_id": "f9700d14-7d0b-4d7e-9562-3ceb45de559d",
+      "flight_leg_id": "c52c5acd-0879-4629-8811-2af87dc3c3cc",
+      "filename": "00000042.bin",
+      "checksum": "80d822f442cb4cea3e07085b02b7e7daca17004fbbd8f53a53a5864d79599507",
+      "reason": "duplicate checksum — same physical file already imported as v1 log dbfd3384-c811-41ac-a362-df7f68be9176 (leg eb38b572-0392-48e8-a69c-995d2505b27c); v2 flight_logs.checksum is UNIQUE"
+    },
+    {
+      "v1_id": "8ed03375-65f1-4c66-9afc-7ec6f3528ce7",
+      "flight_leg_id": "e03ee93f-5ec6-49e8-8a05-3767f71d326d",
+      "filename": "8d3a1323-5512-46f6-b61e-aaaa96ac42cc_00000024.bin",
+      "checksum": "ad0282d1d1f4fd8bd3706a3e5988c2125159675d6dbec18372dd5fe9af970c73",
+      "reason": "duplicate checksum — same physical file already imported as v1 log e87058aa-7c31-4af0-a790-7c7ba798cd9b (leg 27805b72-6140-41c4-bcb7-fbba636cc485); v2 flight_logs.checksum is UNIQUE"
+    }
+  ],
+  "users": [
+    {
+      "v1_id": "c4a93e91-3508-42c4-b32b-ed23c7f8e455",
+      "full_name": "Dow Fisher KBM",
+      "email": "kbm@arrowair.com",
+      "reason": "not referenced by any kept (Quiver-devkit) data"
+    },
+    {
+      "v1_id": "85e19ec1-6e8d-42fc-a1a4-08902e52fca7",
+      "full_name": "adam",
+      "email": "adam@gmail.co",
+      "reason": "not referenced by any kept (Quiver-devkit) data"
+    },
+    {
+      "v1_id": "97d5dafc-5f97-4492-94a1-d558566a0d69",
+      "full_name": "Alex Dada",
+      "email": "alexdada555@arrowair.com",
+      "reason": "not referenced by any kept (Quiver-devkit) data"
+    },
+    {
+      "v1_id": "c8991556-0886-4686-8f6e-852282851055",
+      "full_name": "nuaim",
+      "email": "test.nuaimmf@gmail.com",
+      "reason": "not referenced by any kept (Quiver-devkit) data"
+    },
+    {
+      "v1_id": "09d8fc79-80ad-461e-bf30-cf409cb9b5ad",
+      "full_name": "Bryan Blake",
+      "email": "bryanblakedesign@gmail.com",
+      "reason": "not referenced by any kept (Quiver-devkit) data"
+    },
+    {
+      "v1_id": "6c2b1fdf-9b85-46d5-b649-fbea9e1c1eb5",
+      "full_name": "alperenag",
+      "email": "aalperen.gundogan@arrowair.com",
+      "reason": "not referenced by any kept (Quiver-devkit) data"
+    },
+    {
+      "v1_id": "c975f576-4965-4bc4-a5f1-24efb9df7da7",
+      "full_name": "Vitalii",
+      "email": "bondarenko.vs@gmail.com",
+      "reason": "not referenced by any kept (Quiver-devkit) data"
+    },
+    {
+      "v1_id": "f5976d90-8106-45a7-bc99-18eee910ed81",
+      "full_name": "Amin Fadel",
+      "email": "aminfadel2004@gmail.com",
+      "reason": "not referenced by any kept (Quiver-devkit) data"
+    },
+    {
+      "v1_id": "d30d8e83-a140-4456-a6b4-f1be528b3ef7",
+      "full_name": "khalil",
+      "email": "khalilzaryani007@gmail.com",
+      "reason": "not referenced by any kept (Quiver-devkit) data"
+    },
+    {
+      "v1_id": "10837e8f-f081-4603-934d-3c43009f7e93",
+      "full_name": "As Balcerak",
+      "email": "asbalcerak22@gmail.com",
+      "reason": "not referenced by any kept (Quiver-devkit) data"
+    }
+  ],
+  "storage_objects": [
+    {
+      "v1_path": "2c32bf07-4827-4f5e-a221-ad0a119a8857/a72173f3-6ccf-464b-bed6-edc5cd03c436/2025/08/16/eb086afc-e4ff-4e32-8f47-9ed702733907_00000091.bin",
+      "reason": "not referenced by any v1 flight_leg_logs row"
+    },
+    {
+      "v1_path": "a72173f3-6ccf-464b-bed6-edc5cd03c436/00000079.BIN",
+      "reason": "not referenced by any v1 flight_leg_logs row"
+    },
+    {
+      "v1_path": "bd1b6a72-23eb-4c8a-80aa-239f2c072ca1/c873f639-4671-4515-8ac9-949ed833f89b_00000091.bin",
+      "reason": "referenced by a skipped/duplicate flight_leg_logs row"
+    },
+    {
+      "v1_path": "9a8fa90d-0320-44e0-98bb-1882e695fef7/b7a26556-02f2-4411-8484-60f075dc0bf5_00000014.bin",
+      "reason": "referenced by a skipped/duplicate flight_leg_logs row"
+    },
+    {
+      "v1_path": "f3fdd4ed-b5ec-49d6-b1a2-7c5e56c1ba48/1abeb80c-971d-4c91-937a-a44e92893b76_00000015.bin",
+      "reason": "referenced by a skipped/duplicate flight_leg_logs row"
+    },
+    {
+      "v1_path": "c52c5acd-0879-4629-8811-2af87dc3c3cc/5e67cf35-28e7-4d00-87aa-ff7e150af43c_00000042.bin",
+      "reason": "referenced by a skipped/duplicate flight_leg_logs row"
+    },
+    {
+      "v1_path": "e03ee93f-5ec6-49e8-8a05-3767f71d326d/e2856310-5102-440b-b084-83d71938141d_8d3a1323-5512-46f6-b61e-aaaa96ac42cc_00000024.bin",
+      "reason": "referenced by a skipped/duplicate flight_leg_logs row"
+    }
+  ],
+  "notes": []
+}

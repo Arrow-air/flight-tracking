@@ -1,0 +1,72 @@
+{
+  "generated_at": "2026-08-11T02:47:50.383Z",
+  "dry_run": false,
+  "skip_storage": false,
+  "source": "v1source (local Docker restore of backups/v1-public-20260809.dump + auth/storage data dump)",
+  "v1_totals": {
+    "aircraft": 13,
+    "flight_legs": 193,
+    "flight_leg_logs": 197,
+    "flight_notes": 94,
+    "maintenance": 18,
+    "users": 17,
+    "storage_objects": 199
+  },
+  "kept": {
+    "aircraft": 11,
+    "flights": 191,
+    "flight_logs": 192,
+    "flight_notes": 94,
+    "airframe_events": 16,
+    "users_created": 5,
+    "users_mapped_to_seed": 2,
+    "sites": 9
+  },
+  "v2_rows_before": {
+    "aircraft": 11,
+    "operators": 11,
+    "flights": 191,
+    "flight_notes": 94,
+    "airframe_events": 16,
+    "flight_logs": 192,
+    "users": 5,
+    "sites": 9
+  },
+  "v2_rows_after": {
+    "aircraft": 11,
+    "operators": 11,
+    "flights": 191,
+    "flight_notes": 94,
+    "airframe_events": 16,
+    "flight_logs": 192,
+    "users": 5,
+    "sites": 9
+  },
+  "inserted_this_run": {
+    "aircraft": 0,
+    "operators": 0,
+    "flights": 0,
+    "flight_notes": 0,
+    "airframe_events": 0,
+    "flight_logs": 0,
+    "users": 0,
+    "sites": 0
+  },
+  "storage_staging": {
+    "uploaded": 0,
+    "already_present": 192,
+    "verified_checksums": 192,
+    "failed": []
+  },
+  "race_recovered_rows": 0,
+  "spot_check": {
+    "sampled": 12,
+    "passed": 12,
+    "failures": []
+  },
+  "notes": [
+    "\"z\" (asdf@asdf.com) is a v1 test account but authored kept data; imported to preserve attribution.",
+    "Julius real v1 email is julius@arrowair.com; v2 seed uses placeholder julius@example.com (seed fix is outside import scope).",
+    "flights.started_at approximated by v1 leg created_at (v1 stored no flight times); parser summaries carry true times."
+  ]
+}
