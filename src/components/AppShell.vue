@@ -47,6 +47,12 @@ const sections = computed<SidebarSection[]>(() => {
       items: [{ label: 'New aircraft', to: '/aircraft/new' }],
     });
   }
+  if (isAdmin.value) {
+    out.push({
+      label: 'Admin',
+      items: [{ label: 'Users & access', to: '/admin' }],
+    });
+  }
   return out;
 });
 
