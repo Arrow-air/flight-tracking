@@ -28,18 +28,38 @@ const flights = ref<FlightRow[]>([]);
 const loading = ref(true);
 const error = ref('');
 
+function flightsQuery(summaryCols: string) {
+  return supabase
+    .from('flights')
+    .select(
+      `*, aircraft(serial,name), sites(name), user_profiles!flights_pilot_id_fkey(name), flight_logs(id,status,flight_log_summary(${summaryCols}))`,
+    )
+    .order('started_at', { ascending: false, nullsFirst: false })
+    .limit(200);
+}
+
 onMounted(async () => {
   try {
-    flights.value = await selectRows<FlightRow[]>(
-      supabase
-        .from('flights')
-        .select(
-          '*, aircraft(serial,name), sites(name), user_profiles!flights_pilot_id_fkey(name), flight_logs(id,status,flight_log_summary(duration_s,start_time_utc))',
-        )
-        .order('started_at', { ascending: false, nullsFirst: false })
-        .limit(200),
-      'load flights',
-    );
+    try {
+      flights.value = await selectRows<FlightRow[]>(
+        flightsQuery('duration_s,start_time_utc'),
+        'load flights',
+      );
+    } catch (e) {
+      // Deploy-ordering guard: start_time_utc lands in migration
+      // 20260811120000_v21_summary_takeoff_start_incident.sql. If the
+      // frontend deploys before that migration is applied, the named
+      // column 42703s — fall back to duration_s only so /flights still
+      // renders (start column shows the hand-entered time meanwhile).
+      if (e instanceof Error && e.message.includes('start_time_utc')) {
+        flights.value = await selectRows<FlightRow[]>(
+          flightsQuery('duration_s'),
+          'load flights',
+        );
+      } else {
+        throw e;
+      }
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {

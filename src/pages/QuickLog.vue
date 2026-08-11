@@ -117,8 +117,14 @@ async function onFilePicked(ev: Event) {
   if (!f) return;
 
   // F1: hash + look up the checksum BEFORE anything is created/uploaded.
+  // Re-picking a file while these awaits are in flight makes this run
+  // stale — guard every state write on logFile still being OUR file, or
+  // a slow hash of the old file would attach its checksum (and dup
+  // verdict) to the newly picked one.
   const checksum = await sha256Hex(f);
+  if (logFile.value !== f) return;
   const existing = await findLogByChecksum(checksum);
+  if (logFile.value !== f) return;
   if (existing) {
     logFile.value = null;
     input.value = '';
@@ -129,6 +135,7 @@ async function onFilePicked(ev: Event) {
   logChecksum.value = checksum;
 
   const { time, source } = await extractLogStartTime(f);
+  if (logFile.value !== f) return;
   form.value.started_at = toDatetimeLocal(time);
   logTimeNote.value =
     source === 'gps'
