@@ -12,6 +12,9 @@
 export interface SummaryLite {
   duration_s?: number | null;
   start_time_utc?: string | null;
+  /** D1: COARSE (2 dp, ~1.1 km) takeoff coordinate from the parser. */
+  takeoff_lat?: number | string | null;
+  takeoff_lon?: number | string | null;
 }
 
 export interface LogWithSummary {
@@ -72,4 +75,42 @@ export function flightStartIso(
     }
   }
   return best ?? startedAt ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// D1 — weather coordinate source: prefer the log's coarse takeoff coords
+// (parser-rounded to 2 dp), fall back to the site's coordinates.
+// ---------------------------------------------------------------------------
+export interface WeatherCoords {
+  lat: number;
+  lon: number;
+  source: 'log' | 'site';
+}
+
+function asFiniteNumber(v: number | string | null | undefined): number | null {
+  if (v == null || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Pick the coordinate pair a weather lookup should use for a flight:
+ * the first log summary carrying a coarse takeoff fix wins; otherwise the
+ * site's coordinates; null when neither exists. (numeric columns can
+ * arrive as strings through PostgREST — both are accepted.)
+ */
+export function flightWeatherCoords(
+  logs: LogWithSummary[] | null | undefined,
+  site: { lat: number | null; lon: number | null } | null | undefined,
+): WeatherCoords | null {
+  for (const log of logs ?? []) {
+    const s = embeddedSummary(log);
+    const lat = asFiniteNumber(s?.takeoff_lat);
+    const lon = asFiniteNumber(s?.takeoff_lon);
+    if (lat != null && lon != null) return { lat, lon, source: 'log' };
+  }
+  if (site?.lat != null && site?.lon != null) {
+    return { lat: site.lat, lon: site.lon, source: 'site' };
+  }
+  return null;
 }

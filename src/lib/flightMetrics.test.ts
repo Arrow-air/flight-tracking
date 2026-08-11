@@ -3,6 +3,7 @@ import {
   embeddedSummary,
   flightDurationS,
   flightStartIso,
+  flightWeatherCoords,
   type LogWithSummary,
 } from './flightMetrics';
 
@@ -82,5 +83,59 @@ describe('flightStartIso (F3)', () => {
   it('skips invalid summary timestamps', () => {
     const logs: LogWithSummary[] = [{ flight_log_summary: { start_time_utc: 'garbage' } }];
     expect(flightStartIso(logs, '2026-08-11T09:00:00Z')).toBe('2026-08-11T09:00:00Z');
+  });
+});
+
+describe('flightWeatherCoords (D1)', () => {
+  const site = { lat: 40.0, lon: -105.0 };
+
+  it('prefers the log summary coarse takeoff coords over the site', () => {
+    const logs: LogWithSummary[] = [
+      { flight_log_summary: { takeoff_lat: 37.12, takeoff_lon: -122.65 } },
+    ];
+    expect(flightWeatherCoords(logs, site)).toEqual({
+      lat: 37.12,
+      lon: -122.65,
+      source: 'log',
+    });
+  });
+
+  it('accepts PostgREST numeric-as-string values', () => {
+    const logs: LogWithSummary[] = [
+      { flight_log_summary: [{ takeoff_lat: '37.12', takeoff_lon: '-122.65' }] },
+    ];
+    expect(flightWeatherCoords(logs, null)).toEqual({
+      lat: 37.12,
+      lon: -122.65,
+      source: 'log',
+    });
+  });
+
+  it('skips logs without coords and falls back to the site', () => {
+    const logs: LogWithSummary[] = [
+      { flight_log_summary: { takeoff_lat: null, takeoff_lon: null } },
+      { flight_log_summary: null },
+    ];
+    expect(flightWeatherCoords(logs, site)).toEqual({
+      lat: 40.0,
+      lon: -105.0,
+      source: 'site',
+    });
+  });
+
+  it('requires BOTH lat and lon from the same summary', () => {
+    const logs: LogWithSummary[] = [
+      { flight_log_summary: { takeoff_lat: 37.12, takeoff_lon: null } },
+    ];
+    expect(flightWeatherCoords(logs, site)).toEqual({
+      lat: 40.0,
+      lon: -105.0,
+      source: 'site',
+    });
+  });
+
+  it('returns null when neither log nor site has coordinates', () => {
+    expect(flightWeatherCoords([], { lat: null, lon: null })).toBeNull();
+    expect(flightWeatherCoords(undefined, null)).toBeNull();
   });
 });

@@ -26,7 +26,7 @@ import {
 } from '../lib/db';
 import { supabase } from '../lib/supabase';
 import { toDatetimeLocal, fromDatetimeLocal } from '../lib/format';
-import { extractLogStartTime, sha256Hex } from '../lib/binlog';
+import { extractLogInfo, sha256Hex } from '../lib/binlog';
 import { uploadFlightLog, findLogByChecksum, DuplicateLogError } from '../lib/logs';
 import { fetchWeatherAt, weatherLine, type WeatherSnapshot } from '../lib/weather';
 
@@ -58,11 +58,15 @@ const logChecksum = ref<string | null>(null);
 const logTimeNote = ref('');
 // F1: pre-upload duplicate detection (checksum lookup before any upload)
 const dupFlightId = ref<string | null>(null);
+// D1: COARSE takeoff coordinate read from the log head (2 dp, ~1.1 km) —
+// weather auto-fill prefers it over the site's coordinates.
+const logCoords = ref<{ lat: number; lon: number } | null>(null);
 
 // weather
 const weather = ref<WeatherSnapshot | null>(null);
 const weatherError = ref('');
 const weatherBusy = ref(false);
+const weatherCoordSource = ref<'log' | 'site' | null>(null);
 let weatherSeq = 0; // drop out-of-order responses (site/time changed mid-fetch)
 
 const writableAircraft = computed(() =>
@@ -114,6 +118,7 @@ async function onFilePicked(ev: Event) {
   logChecksum.value = null;
   logTimeNote.value = '';
   dupFlightId.value = null;
+  logCoords.value = null;
   if (!f) return;
 
   // F1: hash + look up the checksum BEFORE anything is created/uploaded.
@@ -134,12 +139,16 @@ async function onFilePicked(ev: Event) {
   }
   logChecksum.value = checksum;
 
-  const { time, source } = await extractLogStartTime(f);
+  const { time, source, lat, lon } = await extractLogInfo(f);
   if (logFile.value !== f) return;
   form.value.started_at = toDatetimeLocal(time);
+  logCoords.value = lat != null && lon != null ? { lat, lon } : null;
   logTimeNote.value =
     source === 'gps'
-      ? `Start time read from the log's GPS clock (${time.toLocaleString()}).`
+      ? `Start time read from the log's GPS clock (${time.toLocaleString()}).` +
+        (logCoords.value
+          ? ' Takeoff coordinates found — weather will use them.'
+          : '')
       : `No GPS time found in the log head — using the file's modified time (${time.toLocaleString()}). The parser will refine it.`;
   void autofillWeather();
 }
@@ -147,9 +156,17 @@ async function onFilePicked(ev: Event) {
 async function autofillWeather() {
   weather.value = null;
   weatherError.value = '';
+  weatherCoordSource.value = null;
+  // D1: the log's coarse takeoff coordinate wins; site coords are fallback.
   const site = selectedSite.value;
-  if (!site || site.lat == null || site.lon == null) {
-    weatherError.value = 'Selected site has no coordinates — add them on the Sites page first.';
+  const coords = logCoords.value
+    ? { ...logCoords.value, source: 'log' as const }
+    : site && site.lat != null && site.lon != null
+      ? { lat: site.lat, lon: site.lon, source: 'site' as const }
+      : null;
+  if (!coords) {
+    weatherError.value =
+      'No coordinates available — attach a log with GPS or pick a site with coordinates (Sites page).';
     return;
   }
   const when = form.value.started_at ? new Date(form.value.started_at) : null;
@@ -160,13 +177,14 @@ async function autofillWeather() {
   weatherBusy.value = true;
   const seq = ++weatherSeq;
   try {
-    const snap = await fetchWeatherAt(site.lat, site.lon, when);
+    const snap = await fetchWeatherAt(coords.lat, coords.lon, when);
     if (seq !== weatherSeq) return; // a newer fetch superseded this one
     if (!snap) {
       weatherError.value = 'Open-Meteo returned no data for that time/place.';
       return;
     }
     weather.value = snap;
+    weatherCoordSource.value = coords.source;
   } catch (e) {
     if (seq !== weatherSeq) return;
     weatherError.value = `Weather lookup failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -179,7 +197,9 @@ async function autofillWeather() {
 watch(
   () => [form.value.site_id, form.value.started_at],
   () => {
-    if (siteHasCoords.value && form.value.started_at) void autofillWeather();
+    if ((logCoords.value || siteHasCoords.value) && form.value.started_at) {
+      void autofillWeather();
+    }
   },
 );
 
@@ -342,7 +362,7 @@ async function submit() {
           <AppButton
             size="sm"
             variant="secondary"
-            :disabled="weatherBusy || !siteHasCoords || !form.started_at"
+            :disabled="weatherBusy || (!logCoords && !siteHasCoords) || !form.started_at"
             data-test="fetch-weather"
             @click="autofillWeather"
           >
@@ -351,11 +371,18 @@ async function submit() {
         </div>
         <p v-if="weather" class="ql-weather__result" data-test="weather-result">
           {{ weatherLine(weather) }}
-          <span class="ql-weather__source">source: {{ weather.source }} — saved into the flight notes</span>
+          <span class="ql-weather__source">
+            source: {{ weather.source }}
+            <template v-if="weatherCoordSource">
+              at {{ weatherCoordSource === 'log' ? 'log takeoff coordinates (coarse)' : 'site coordinates' }}
+            </template>
+            — saved into the flight notes
+          </span>
         </p>
         <p v-else-if="weatherError" class="ql-weather__error">{{ weatherError }}</p>
         <p v-else class="ql-weather__hint">
-          Pick a site with coordinates and a start time — conditions come from
+          Attach a log with GPS (its coarse takeoff coordinates win) or pick a
+          site with coordinates, plus a start time — conditions come from
           Open-Meteo (keyless) and get appended to the notes.
         </p>
       </div>
