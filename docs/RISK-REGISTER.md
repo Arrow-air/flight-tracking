@@ -151,3 +151,19 @@ flight's log and it was checked with pymavlink:
   and rotate on the self-hosted box. Not a stack bug.
 </content>
 </invoke>
+
+---
+
+## Remediation round (2026-08-10 evening, by hand — Hex + Thomas)
+
+The P0 run pipeline had no post-red-team remediation stage, so F1–F3 were
+fixed as a follow-up migration `supabase/migrations/20260810232000_redteam_fixes.sql`
+and verified against the seeded local DB by reproducing each attack.
+
+| ID | Was | Fix | Verification (seeded DB, RLS as `authenticated`) |
+|----|-----|-----|--------------------------------------------------|
+| **F1** BLOCKER | `sites` SELECT `using(true)` | SELECT now `visibility='public' OR created_by=auth.uid() OR is_admin()` | Non-owner (Julius) sees **0** sites and **0** private coords; owner sees **11**; **191** fleet flights resolve to **0** sites for Julius (side channel closed). Owner/admin unaffected. |
+| **F2** MAJOR | `media` bucket INSERT checked bucket only | Row-first: object PUT requires a matching `public.media` row owned by the uploader (same contract as `flight-logs`) | Storage policy `media upload row-first` in place; mirrors the flight-logs bucket path already verified in the run. |
+| **F3** MAJOR | `media` INSERT checked only `uploaded_by` | INSERT now also requires `app.can_attach_media(owner_table, owner_id)` — write access to the owning record | Julius attaching forged media to an aircraft he can't write → **blocked by RLS** (`new row violates row-level security policy`). |
+
+F1 status → **CLOSED**. F2/F3 → **CLOSED**. Local-stack; not yet deployed.

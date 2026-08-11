@@ -1,3 +1,68 @@
+<!-- ===================================================================== -->
+<!-- HOST PROCESS RECORD (written by the headless host after workflow exit) -->
+<!-- ===================================================================== -->
+
+# Host record — workflow `wf_034e42ae-bd3` (task `wa45eqzso`)
+
+Completed 2026-08-10. Duration ~2h41m (9,658,576 ms). Agents: 28 spawned,
+27 done, 1 errored (`redteam:drift` — API connection lost mid-response; the
+red-team drift check did not return, but the primary red-team attack agent did).
+Subagent tokens: 1,766,784. Tool uses: 917.
+
+**Workflow return value (verbatim):**
+
+```json
+{
+  "design":  { "exit": "pass", "rounds": 1 },
+  "schema":  { "exit": "pass", "rounds": 1 },
+  "parser":  { "exit": "pass", "rounds": 2 },
+  "ui":      { "exit": "pass", "rounds": 1 },
+  "import":  { "exit": "pass", "rounds": 1 },
+  "redTeam": [ { "pass": false, "score": 62, "issues": 4 } ],
+  "packaged": true
+}
+```
+
+**Phase-by-phase, as returned by the gates:**
+
+| Phase | Rounds | Gate exit | Notes |
+|---|---|---|---|
+| Preflight | 1 | pass | 8/8 environment + reference-build checks green |
+| Design System | 1 | pass | docs design-system port, screenshot critics passed |
+| Schema + RLS | 1 | pass | M0 migrations + RLS matrix hard gate passed |
+| Parser | 2 | pass | round 1 failed on battery-plausibility (score 76); round 2 windowed battery stats and passed; 30/30 gate + full 101-log corpus, 0 sanitization leaks |
+| UI | 1 | pass | P0 screens; build + functional + style gates passed |
+| Import | 1 | pass | v1 import dry-run gate passed |
+| Red Team | 1 | **FAIL (score 62)** | 25 attacks; 3 findings still OPEN — see below |
+| Package | — | done | `packaged: true`; 6 commits on `overnight/p0`, **not pushed** |
+
+**Headline caveat — the red-team gate did not pass and its findings are
+unremediated.** The workflow packaged anyway (packaging is unconditional). Three
+security findings landed against the live stack and remain OPEN in the branch:
+
+- **[BLOCKER] Private site coordinates leak to any authenticated user** —
+  `sites` SELECT policy is `using(true)`, never checks `visibility`. Because
+  flights are fleet-visible with `site_id`, a non-owner can resolve the takeoff
+  location of a `gps_private` flight — a GPS-privacy side channel.
+  (`supabase/migrations/20260810210300_rls.sql`)
+- **[MAJOR] Arbitrary writes to the `media` bucket** — INSERT storage policy
+  checks only `bucket_id='media'`, no path/owner constraint. An operator can PUT
+  objects into any victim's path. (`supabase/migrations/20260810210500_storage.sql`)
+- **[MAJOR] Forged evidence attachments** — `media` INSERT checks only
+  `uploaded_by=self`, not write access to the referenced owner row; an operator
+  can fabricate crash photos / reports on aircraft they don't control.
+  (`supabase/migrations/20260810210300_rls.sql`)
+- [minor] RLS-denied UPDATE/DELETE returns HTTP 200 `[]` rather than an error
+  (v1 pain point #1); enforcement rests on the client treating 0 rows as failure.
+
+The `redteam:drift` agent errored (connection lost) and did not return a verdict,
+so drift was not independently scored this run. Full attack evidence is in the
+workflow journal (agent `a4765552834712324`).
+
+---
+
+<!-- Everything below is the packager agent's own RUN-RESULT (committed on the branch). -->
+
 # RUN-RESULT — Overnight P0 build, branch `overnight/p0`
 
 Run window: 2026-08-09 (planning commits) → 2026-08-10/11 overnight (build).
