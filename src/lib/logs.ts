@@ -27,11 +27,31 @@ export class DuplicateLogError extends Error {
   }
 }
 
+/**
+ * Pre-upload dedupe check (F1): look up an existing flight_logs row by
+ * checksum so the UI can warn/skip BEFORE creating a flight stub or
+ * moving bytes. Best-effort — errors return null; the UNIQUE index on
+ * flight_logs.checksum still guards the race at INSERT time.
+ */
+export async function findLogByChecksum(
+  checksum: string,
+): Promise<Pick<FlightLog, 'id' | 'flight_id' | 'uploaded_at'> | null> {
+  const { data, error } = await supabase
+    .from('flight_logs')
+    .select('id, flight_id, uploaded_at')
+    .eq('checksum', checksum)
+    .maybeSingle();
+  if (error) return null;
+  return (data as Pick<FlightLog, 'id' | 'flight_id' | 'uploaded_at'> | null) ?? null;
+}
+
 export async function uploadFlightLog(
   flightId: string,
   file: File,
+  /** Skip re-hashing when the caller already computed the sha256 (F1 pre-check). */
+  precomputedChecksum?: string,
 ): Promise<FlightLog> {
-  const checksum = await sha256Hex(file);
+  const checksum = precomputedChecksum ?? (await sha256Hex(file));
   const objectPath = `${flightId}/${checksum.slice(0, 12)}_${safeName(file.name)}`;
 
   let row: FlightLog;

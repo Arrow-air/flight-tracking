@@ -26,8 +26,8 @@ import {
 } from '../lib/db';
 import { supabase } from '../lib/supabase';
 import { toDatetimeLocal, fromDatetimeLocal } from '../lib/format';
-import { extractLogStartTime } from '../lib/binlog';
-import { uploadFlightLog, DuplicateLogError } from '../lib/logs';
+import { extractLogStartTime, sha256Hex } from '../lib/binlog';
+import { uploadFlightLog, findLogByChecksum, DuplicateLogError } from '../lib/logs';
 import { fetchWeatherAt, weatherLine, type WeatherSnapshot } from '../lib/weather';
 
 const router = useRouter();
@@ -44,8 +44,9 @@ const form = ref({
   aircraft_id: '',
   pilot_id: '',
   site_id: '',
+  // F3: optional — leave as-is or clear it; the parser's log-derived
+  // start_time_utc wins on display once the log is parsed.
   started_at: toDatetimeLocal(new Date()),
-  ended_at: '',
   title: '',
   notes: '',
   tags: '',
@@ -53,7 +54,10 @@ const form = ref({
 });
 
 const logFile = ref<File | null>(null);
+const logChecksum = ref<string | null>(null);
 const logTimeNote = ref('');
+// F1: pre-upload duplicate detection (checksum lookup before any upload)
+const dupFlightId = ref<string | null>(null);
 
 // weather
 const weather = ref<WeatherSnapshot | null>(null);
@@ -82,6 +86,9 @@ onMounted(async () => {
         supabase.from('aircraft').select('*, aircraft_types(name)').order('serial'),
         'load aircraft',
       ),
+      // F2: sites have no operator edge in the schema — RLS already scopes
+      // this select to own + public (+ admin), so the dropdown is filtered
+      // server-side. Aircraft are scoped via writableAircraft above.
       selectRows<Site[]>(supabase.from('sites').select('*').order('name'), 'load sites'),
       selectRows<Profile[]>(
         supabase.from('user_profiles').select('id,name,roles,gps_default_private').order('name'),
@@ -104,8 +111,23 @@ async function onFilePicked(ev: Event) {
   const input = ev.target as HTMLInputElement;
   const f = input.files?.[0] ?? null;
   logFile.value = f;
+  logChecksum.value = null;
   logTimeNote.value = '';
+  dupFlightId.value = null;
   if (!f) return;
+
+  // F1: hash + look up the checksum BEFORE anything is created/uploaded.
+  const checksum = await sha256Hex(f);
+  const existing = await findLogByChecksum(checksum);
+  if (existing) {
+    logFile.value = null;
+    input.value = '';
+    dupFlightId.value = existing.flight_id;
+    logTimeNote.value = `${f.name} was already uploaded (checksum ${checksum.slice(0, 12)}…) — duplicate skipped.`;
+    return;
+  }
+  logChecksum.value = checksum;
+
   const { time, source } = await extractLogStartTime(f);
   form.value.started_at = toDatetimeLocal(time);
   logTimeNote.value =
@@ -174,7 +196,6 @@ async function submit() {
       pilot_id: form.value.pilot_id || null,
       site_id: form.value.site_id || null,
       started_at: fromDatetimeLocal(form.value.started_at),
-      ended_at: fromDatetimeLocal(form.value.ended_at),
       title: form.value.title.trim() || null,
       notes: notes || null,
       gps_private: form.value.gps_private,
@@ -207,7 +228,7 @@ async function submit() {
     if (logFile.value) {
       busyStep.value = `Uploading ${logFile.value.name}…`;
       try {
-        await uploadFlightLog(flight.id, logFile.value);
+        await uploadFlightLog(flight.id, logFile.value, logChecksum.value ?? undefined);
       } catch (e) {
         if (e instanceof DuplicateLogError) {
           error.value = `Flight saved, but the log was skipped: ${e.message}`;
@@ -287,15 +308,24 @@ async function submit() {
       </div>
 
       <div class="ql-form__row">
-        <AppInput v-model="form.started_at" label="Started" type="datetime-local" required />
-        <AppInput v-model="form.ended_at" label="Ended" type="datetime-local" hint="Leave empty if the log will provide it" />
+        <AppInput
+          v-model="form.started_at"
+          label="Started"
+          type="datetime-local"
+          hint="Optional — the log's own clock takes precedence once parsed"
+        />
       </div>
 
       <!-- log attach -->
       <div class="ql-file">
         <label class="ql-file__label" for="ql-log">DataFlash log (.bin, optional)</label>
         <input id="ql-log" type="file" accept=".bin,.BIN" @change="onFilePicked" />
-        <p v-if="logTimeNote" class="ql-file__note">{{ logTimeNote }}</p>
+        <p v-if="logTimeNote" class="ql-file__note" :class="{ 'ql-file__note--warn': dupFlightId }">
+          {{ logTimeNote }}
+          <router-link v-if="dupFlightId" :to="`/flights/${dupFlightId}`">
+            Open the flight it belongs to →
+          </router-link>
+        </p>
       </div>
 
       <!-- weather -->
@@ -394,6 +424,10 @@ async function submit() {
   margin: 0;
   font-size: 12px;
   color: var(--docs-text-muted);
+}
+
+.ql-file__note--warn {
+  color: #b45309;
 }
 
 .ql-weather {

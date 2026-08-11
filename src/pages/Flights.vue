@@ -14,12 +14,13 @@ import AlertBanner from '../components/AlertBanner.vue';
 import { selectRows, type Flight, type FlightLogStatus } from '../lib/db';
 import { supabase } from '../lib/supabase';
 import { fmtDateTime, fmtDuration } from '../lib/format';
+import { flightDurationS, flightStartIso, type LogWithSummary } from '../lib/flightMetrics';
 
 interface FlightRow extends Flight {
   aircraft?: { serial: string; name: string | null } | null;
   sites?: { name: string } | null;
   user_profiles?: { name: string | null } | null;
-  flight_logs?: { id: string; status: FlightLogStatus }[];
+  flight_logs?: ({ id: string; status: FlightLogStatus } & LogWithSummary)[];
 }
 
 const router = useRouter();
@@ -33,7 +34,7 @@ onMounted(async () => {
       supabase
         .from('flights')
         .select(
-          '*, aircraft(serial,name), sites(name), user_profiles!flights_pilot_id_fkey(name), flight_logs(id,status)',
+          '*, aircraft(serial,name), sites(name), user_profiles!flights_pilot_id_fkey(name), flight_logs(id,status,flight_log_summary(duration_s,start_time_utc))',
         )
         .order('started_at', { ascending: false, nullsFirst: false })
         .limit(200),
@@ -77,15 +78,14 @@ const rows = computed(() =>
     const roll = logRollup(f.flight_logs);
     return {
       id: f.id,
-      started_at: fmtDateTime(f.started_at),
+      // F3: log-derived start_time_utc wins over the hand-entered time
+      started_at: fmtDateTime(flightStartIso(f.flight_logs, f.started_at)),
       aircraft: f.aircraft ? f.aircraft.name || f.aircraft.serial : '—',
       title: f.title ?? '(untitled)',
       pilot: f.user_profiles?.name ?? '—',
       site: f.sites?.name ?? '—',
-      duration:
-        f.started_at && f.ended_at
-          ? fmtDuration((new Date(f.ended_at).getTime() - new Date(f.started_at).getTime()) / 1000)
-          : '—',
+      // E1: parsed summary duration_s wins; ended-started is only a fallback
+      duration: fmtDuration(flightDurationS(f.flight_logs, f.started_at, f.ended_at)),
       logs: roll.label,
       logStatus: roll.status,
       gps: f.gps_private ? 'private' : 'shared',

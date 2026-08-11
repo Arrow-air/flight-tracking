@@ -17,15 +17,24 @@ import AlertBanner from '../components/AlertBanner.vue';
 import { auth, isAdmin, userId } from '../lib/auth';
 import { insertRow, selectRows, type Aircraft, type Flight, type Profile, type Site } from '../lib/db';
 import { supabase } from '../lib/supabase';
-import { extractLogStartTime } from '../lib/binlog';
-import { uploadFlightLog, DuplicateLogError } from '../lib/logs';
+import { extractLogStartTime, sha256Hex } from '../lib/binlog';
+import { uploadFlightLog, findLogByChecksum, DuplicateLogError } from '../lib/logs';
 import { fmtBytes, fmtDateTime } from '../lib/format';
 
-type ItemState = 'queued' | 'timing' | 'creating' | 'uploading' | 'done' | 'duplicate' | 'failed';
+type ItemState =
+  | 'hashing'
+  | 'queued'
+  | 'timing'
+  | 'creating'
+  | 'uploading'
+  | 'done'
+  | 'duplicate'
+  | 'failed';
 
 interface Item {
   file: File;
   state: ItemState;
+  checksum: string | null;
   startTime: Date | null;
   timeSource: 'gps' | 'mtime' | null;
   flightId: string | null;
@@ -55,6 +64,8 @@ onMounted(async () => {
         supabase.from('aircraft').select('*, aircraft_types(name)').order('serial'),
         'load aircraft',
       ),
+      // F2: sites dropdown is scoped server-side by RLS (own + public +
+      // admin) — no operator edge exists on sites in the schema.
       selectRows<Site[]>(supabase.from('sites').select('*').order('name'), 'load sites'),
       selectRows<Profile[]>(
         supabase.from('user_profiles').select('id,name,roles,gps_default_private').order('name'),
@@ -80,12 +91,40 @@ function addFiles(list: FileList | File[] | null) {
     if (items.value.some((i) => i.file.name === f.name && i.file.size === f.size)) continue;
     items.value.push({
       file: f,
-      state: 'queued',
+      state: 'hashing',
+      checksum: null,
       startTime: null,
       timeSource: null,
       flightId: null,
       message: '',
     });
+    // F1: screen for duplicates (sha256 + checksum lookup) BEFORE any
+    // flight stub is created — grab the reactive proxy just pushed.
+    void screenItem(items.value[items.value.length - 1]);
+  }
+}
+
+/** F1 pre-upload dedupe: dupes get flagged/skipped before processAll runs. */
+async function screenItem(item: Item) {
+  try {
+    item.checksum = await sha256Hex(item.file);
+    const staged = items.value.find((o) => o !== item && o.checksum === item.checksum);
+    if (staged) {
+      item.state = 'duplicate';
+      item.message = `Same content as ${staged.file.name} — will be skipped.`;
+      return;
+    }
+    const existing = await findLogByChecksum(item.checksum);
+    if (existing) {
+      item.state = 'duplicate';
+      item.flightId = existing.flight_id;
+      item.message = 'Already uploaded — will be skipped.';
+      return;
+    }
+    item.state = 'queued';
+  } catch {
+    // best-effort pre-check: the unique checksum index still catches dupes
+    item.state = 'queued';
   }
 }
 
@@ -127,7 +166,7 @@ async function processAll() {
       item.flightId = flight.id;
 
       item.state = 'uploading';
-      await uploadFlightLog(flight.id, item.file);
+      await uploadFlightLog(flight.id, item.file, item.checksum ?? undefined);
       item.state = 'done';
       item.message = 'Flight stub created, log queued for parsing.';
     } catch (e) {
@@ -166,6 +205,7 @@ const rows = computed(() =>
 );
 
 const stateVariant: Record<ItemState, 'neutral' | 'info' | 'warning' | 'success' | 'danger'> = {
+  hashing: 'info',
   queued: 'neutral',
   timing: 'info',
   creating: 'info',
@@ -176,6 +216,10 @@ const stateVariant: Record<ItemState, 'neutral' | 'info' | 'warning' | 'success'
 };
 
 const doneCount = computed(() => items.value.filter((i) => i.state === 'done').length);
+const hashingCount = computed(() => items.value.filter((i) => i.state === 'hashing').length);
+const queuedCount = computed(
+  () => items.value.filter((i) => i.state === 'queued' || i.state === 'failed').length,
+);
 </script>
 
 <template>
@@ -248,8 +292,18 @@ const doneCount = computed(() => items.value.filter((i) => i.state === 'done').l
 
     <div v-if="items.length" class="bulk-actions">
       <span class="mono-label">{{ items.length }} file(s) staged</span>
-      <AppButton :disabled="running || !defaults.aircraft_id" data-test="start-bulk" @click="processAll">
-        {{ running ? 'Processing…' : `Create ${items.length} flight stub(s)` }}
+      <AppButton
+        :disabled="running || !defaults.aircraft_id || hashingCount > 0 || queuedCount === 0"
+        data-test="start-bulk"
+        @click="processAll"
+      >
+        {{
+          running
+            ? 'Processing…'
+            : hashingCount > 0
+              ? 'Checking for duplicates…'
+              : `Create ${queuedCount} flight stub(s)`
+        }}
       </AppButton>
     </div>
 

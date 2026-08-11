@@ -42,6 +42,7 @@ import {
   requeueLog,
   DuplicateLogError,
 } from '../lib/logs';
+import { flightStartIso } from '../lib/flightMetrics';
 
 interface FlightFull extends Flight {
   aircraft?: { id: string; serial: string; name: string | null; aircraft_types?: { name: string } | null } | null;
@@ -77,6 +78,12 @@ function summaryOf(l: LogFull): FlightLogSummary | null {
     ? (l.flight_log_summary[0] ?? null)
     : l.flight_log_summary;
 }
+
+// F3: display start prefers the parser's start_time_utc over the
+// hand-entered (now optional) started_at.
+const startIso = computed(() =>
+  flightStartIso(logs.value, flight.value?.started_at ?? null),
+);
 
 async function loadLogs() {
   logs.value = await selectRows<LogFull[]>(
@@ -149,7 +156,6 @@ const editForm = ref({
   title: '',
   site_id: '',
   started_at: '',
-  ended_at: '',
   notes: '',
   gps_private: true,
 });
@@ -162,7 +168,6 @@ function startEdit() {
     started_at: flight.value.started_at
       ? toDatetimeLocal(new Date(flight.value.started_at))
       : '',
-    ended_at: flight.value.ended_at ? toDatetimeLocal(new Date(flight.value.ended_at)) : '',
     notes: flight.value.notes ?? '',
     gps_private: flight.value.gps_private,
   };
@@ -173,11 +178,11 @@ async function saveEdit() {
   if (!flight.value) return;
   error.value = '';
   try {
+    // F3: the "ended" field is gone — duration comes from the parsed log.
     await updateRow('flights', flight.value.id, {
       title: editForm.value.title.trim() || null,
       site_id: editForm.value.site_id || null,
       started_at: fromDatetimeLocal(editForm.value.started_at),
-      ended_at: fromDatetimeLocal(editForm.value.ended_at),
       notes: editForm.value.notes.trim() || null,
       gps_private: editForm.value.gps_private,
     }, 'update flight');
@@ -312,7 +317,7 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
     <template v-if="flight">
       <div class="page-header">
         <h1>
-          {{ flight.title || `Flight ${fmtDateTime(flight.started_at)}` }}
+          {{ flight.title || `Flight ${fmtDateTime(startIso)}` }}
           <AppBadge :variant="flight.gps_private ? 'neutral' : 'success'" square>
             GPS {{ flight.gps_private ? 'private' : 'shared' }}
           </AppBadge>
@@ -323,8 +328,7 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
             ({{ flight.aircraft.aircraft_types.name }})</template>
           · {{ flight.user_profiles?.name ?? 'unknown pilot' }}
           · {{ flight.sites?.name ?? 'no site' }}
-          · {{ fmtDateTime(flight.started_at) }}
-          <template v-if="flight.ended_at">→ {{ fmtDateTime(flight.ended_at) }}</template>
+          · {{ fmtDateTime(startIso) }}
         </p>
       </div>
 
@@ -354,8 +358,12 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
           />
         </div>
         <div class="fc-edit__row">
-          <AppInput v-model="editForm.started_at" label="Started" type="datetime-local" />
-          <AppInput v-model="editForm.ended_at" label="Ended" type="datetime-local" />
+          <AppInput
+            v-model="editForm.started_at"
+            label="Started"
+            type="datetime-local"
+            hint="Optional — the log's own clock takes precedence once parsed"
+          />
         </div>
         <AppInput v-model="editForm.notes" as="textarea" label="Notes" />
         <AppInput v-model="editForm.gps_private" as="checkbox" label="GPS private" />
