@@ -1,0 +1,23 @@
+{
+  "phase": "parser",
+  "round": 2,
+  "role": "critic-gate",
+  "date": "2026-08-10",
+  "score": 93,
+  "pass": true,
+  "issues": [
+    {"severity": "minor", "description": "Builder r2 re-ran the critic harness and rewrote parser/tests/results/gate-r1.json (tests/ is critic-owned). Mitigated: pre-fix critic copy preserved at gate-r1-critic-pre-r2.json and this critic independently re-ran everything (gate-r2.json). Process note only.", "file": "parser/tests/results/gate-r1.json"},
+    {"severity": "minor", "description": "Landed flight_log_summary has no columns (nor jsonb overflow) for armed_duration_s, start_time_utc, vehicle, max_alt_source, message_counts - silently dropped on DB write. start_time_utc is needed by bulk-dump intake (flight stubs from log timestamps). Needs one schema-phase ALTER; db.py introspects and will pick them up automatically.", "file": "supabase/migrations"},
+    {"severity": "minor", "description": "Health-score thresholds partly ASSUMPTION (motor spread 15%, RSSI dropout rule, deduction weights) and wind estimate not computed (wind column NULL). Labelled in-file; unchanged since r1.", "file": "parser/arrow_parser/health.py"},
+    {"severity": "minor", "description": "Offline cells inference ambiguous (corpus inferred 12/13/14/15 across 101 Quiver logs vs seeded Quiver cells=14). All per-cell values still land in the 2.5-4.6 V plausibility band; live watcher path uses aircraft_types.cells via join, so this only affects CLI use without --cells.", "file": "parser/arrow_parser/summary.py"}
+  ],
+  "evidence": {
+    "r2_fix_verified": "Round-1 blocker (post-landing power-off transient in battery stats) fixed: 00000086 vmin=48.75 window=armed pc_min=3.75 (was 25.4/1.95); 00000088 vmin=53.88 pc_min=3.848 (was 22.5/1.61); 00000089 vmin=52.43 pc_min=3.745 (was 26.5/1.89). sag_v 4.975 on 00000086 matches builder claim.",
+    "gate_r2": "parser/.venv/bin/python parser/tests/gate_round2.py -> 30/30 green in 341s (18 PT1 + test12 + SITL + NAS every-10th sample 00000018/28/38/48/58/68/78/88/98/108). Full JSON: parser/tests/results/gate-r2.json; per-fixture table via tests/report_table.py.",
+    "corpus": "tests/gate_round1.py corpus (builder-launched pid 36282, critic-monitored to completion) -> 101/101 green in 1923s, results parser/tests/results/corpus-r1.json. 1.94 GB total; CLI 8.1 s/log avg (2.4 MB/s); 19.0 s/log wall including the harness's two independent deep re-scans per log. duration range 5.5-4555.9 s, per_cell_min 3.269-4.177 V, builder verify ok on all.",
+    "sanitization": "Independent pymavlink re-scan of every sanitized copy (harness scan(), not builder code): 0 surviving location-type messages and 0 nonzero Lat/Lng-like fields across all 131 checks (30 gate + 101 corpus). Example test12: before GPS:2292 GPA:2292 POS:2434 ORGN:4 (78 msg types) -> after none (74 types; AHR2/CMD/MISE kept with lat/lng zeroed, loc_field_hits={}). Raw-vs-sanitized span_s/volt_min/CurrTot deltas 0.0% everywhere (contract is <=1%).",
+    "alignment_checks": "LISTEN channel flight_log_uploaded matches tg_notify_flight_log_uploaded in migrations/20260810210200_helpers.sql; buckets flight-logs / flight-logs-sanitized match 20260810210500_storage.sql; seeded Quiver cells=14 (20260810210600) consistent with NAS inference."
+  },
+  "first_fully_green_round": true,
+  "corpus_requirement_met": true
+}
