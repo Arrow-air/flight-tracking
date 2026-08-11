@@ -1,0 +1,194 @@
+/* ==========================================================================
+   ARROW FLIGHT TRACKING — DESIGN TOKENS
+   Ported from the Arrow docs site (website repo src/css/custom.css +
+   src/theme/Navbar/DocsNavbar.module.css). Values are copied verbatim
+   where the docs define them.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   FONT FACES — woff2 files copied from website/static/fonts into /fonts/
+   -------------------------------------------------------------------------- */
+
+@font-face {
+  font-family: 'Departure Mono';
+  src: url('/fonts/DepartureMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Jetbrainsmono';
+  src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Jetbrainsmono';
+  src: url('/fonts/JetBrainsMono-Italic.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Jetbrainsmono';
+  src: url('/fonts/JetBrainsMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Jetbrainsmono';
+  src: url('/fonts/JetBrainsMono-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Jetbrainsmono';
+  src: url('/fonts/JetBrainsMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Neue Haas Grotesk';
+  src: url('/fonts/NHaasGroteskTXPro-55Rg.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Neue Haas Grotesk';
+  src: url('/fonts/NHaasGroteskTXPro-56It.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Neue Haas Grotesk';
+  src: url('/fonts/NHaasGroteskTXPro-65Md.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Neue Haas Grotesk';
+  src: url('/fonts/NHaasGroteskTXPro-75Bd.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* --------------------------------------------------------------------------
+   TOKENS
+   -------------------------------------------------------------------------- */
+
+:root {
+  /* Primary (docs :root) */
+  --docs-primary: #0843BF;
+  --docs-primary-rgb: 8, 67, 191;
+  --docs-primary-dark: #073aab;
+  --docs-primary-darker: #0636a1;
+  --docs-primary-darkest: #052d85;
+  --docs-primary-light: rgba(8, 67, 191, 0.08);
+  --docs-primary-border: #D0D9F3;
+
+  /* Neutrals (docs :root) */
+  --docs-text: #1f2937;
+  --docs-text-secondary: #4b5563;
+  --docs-text-muted: #6b7280;
+  --docs-text-description: #2e3134;
+  --docs-border: #e5e7eb;
+  --docs-bg: #ffffff;
+  --docs-bg-subtle: #f3f6f9;
+
+  /* Cards (docs :root) */
+  --card-border: #b1c0ec;
+  --card-bg: #f1f3f8;
+  --card-hover-color: #ECF0FA;
+  --card-hover-border: #6D8ED9;
+  --card-hover-media-border: #A8BCE8;
+  --card-pattern-color: rgba(8, 67, 191, 0.1);
+
+  /* Brand darks (docs bootstrap layer) */
+  --brand-dark: #060528;
+  --brand-navy: #1b1464;
+
+  /* Navbar (DocsNavbar.module.css: 72px bar, #0943bf, slash pattern) */
+  --navbar-bg: #0943bf;
+  --navbar-height: 72px;
+  --navbar-deep: #072a80; /* mobile brand bar / darker navbar variant */
+
+  /* SubNav / tab bar */
+  --subnav-bg: #dee1e4;
+  --subnav-line: #B9BABD;
+
+  /* Code / inset surfaces */
+  --code-bg: #eef0f3;
+  --code-border: #d5d8dc;
+  --panel-border: #d0d3d7;
+
+  /* Hard-shadow (admonitions, code blocks, framed images) */
+  --shadow-hard: 4px 4px 0 0 rgba(0, 0, 0, 0.05);
+  --shadow-hard-strong: 4px 4px 0 0 rgba(0, 0, 0, 0.12);
+  --shadow-lift: 0 6px 16px rgba(0, 0, 0, 0.1);
+
+  /* Status colors (docs admonitions + pills) */
+  --status-success: #3d8b37;
+  --status-success-bg: #f0f7ec;
+  --status-success-text: #15803d;
+  --status-success-tint: rgba(34, 197, 94, 0.15);
+  --status-info: #2563eb;
+  --status-info-bg: #edf2fc;
+  --status-warning: #d97706;
+  --status-warning-bg: #fef8ec;
+  --status-warning-text: #92400e;
+  --status-warning-tint: rgba(245, 158, 11, 0.15);
+  --status-danger: #dc2626;
+  --status-danger-bg: #fdf2f2;
+  --status-danger-text: #b91c1c;
+  --status-danger-tint: rgba(239, 68, 68, 0.15);
+  --status-neutral: #b1b5b9;
+  --status-neutral-bg: #f5f5f3;
+
+  /* Typography */
+  --font-sans: 'Neue Haas Grotesk', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Jetbrainsmono', 'JetBrains Mono', ui-monospace, SFMono-Regular,
+    monospace;
+  --font-mono-display: 'Departure Mono', 'Jetbrainsmono', monospace;
+  /* Docs sidebar top-level labels lead with IBM Plex Mono (Google-hosted on
+     the docs site); we fall back through local mono faces instead of taking
+     a network dependency. */
+  --font-mono-label: 'IBM Plex Mono', 'Departure Mono', 'Jetbrainsmono',
+    monospace;
+
+  --font-size-base: 16px;
+  --line-height-base: 1.6;
+
+  /* Layout rhythm (docs) */
+  --content-max-width: 860px;
+  --page-max-width: 1600px;
+  --sidebar-width: 300px;
+  --radius: 0; /* docs use square corners almost everywhere */
+  --radius-soft: 4px; /* navbar controls, small chips */
+
+  /* Focus ring */
+  --focus-ring: 0 0 0 3px rgba(8, 67, 191, 0.25);
+
+  /* Pixel-art assets, inlined from the docs site */
+  /* Slash strip under the navbar (white 30%) */
+  --pixel-slash-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='8' viewBox='0 0 6 8' shape-rendering='crispEdges'%3E%3Crect x='4' y='0' width='2' height='2' fill='rgba(255,255,255,0.3)'/%3E%3Crect x='3' y='2' width='2' height='2' fill='rgba(255,255,255,0.3)'/%3E%3Crect x='2' y='4' width='2' height='2' fill='rgba(255,255,255,0.3)'/%3E%3Crect x='1' y='6' width='2' height='2' fill='rgba(255,255,255,0.3)'/%3E%3C/svg%3E");
+  /* Slash strip at the bottom of the sidebar (grey 35%) */
+  --pixel-slash-grey: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='8' viewBox='0 0 6 8' shape-rendering='crispEdges'%3E%3Crect x='4' y='0' width='2' height='2' fill='rgba(156,163,175,0.35)'/%3E%3Crect x='3' y='2' width='2' height='2' fill='rgba(156,163,175,0.35)'/%3E%3Crect x='2' y='4' width='2' height='2' fill='rgba(156,163,175,0.35)'/%3E%3Crect x='1' y='6' width='2' height='2' fill='rgba(156,163,175,0.35)'/%3E%3C/svg%3E");
+}

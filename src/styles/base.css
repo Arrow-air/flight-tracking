@@ -1,0 +1,369 @@
+/* ==========================================================================
+   ARROW FLIGHT TRACKING — BASE STYLES
+   Global typography, layout shell, and element defaults, ported from the
+   Arrow docs site content styles (.theme-doc-markdown rules).
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* `html body` outranks the scaffold Home.vue's unscoped `body` dark rule
+   (that placeholder page is replaced in the UI phase). */
+html body {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  color: var(--docs-text-secondary);
+  background: var(--docs-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --------------------------------------------------------------------------
+   Headings hierarchy (docs)
+   -------------------------------------------------------------------------- */
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-sans);
+}
+
+h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--docs-text);
+  letter-spacing: -0.02em;
+  margin: 0 0 1.25rem 0;
+  padding-bottom: 0.625rem;
+  border-bottom: 3px double var(--docs-border);
+}
+
+/* H1 with a description line below it: put the double rule on the wrapper */
+.page-header {
+  padding-bottom: 0.625rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 3px double var(--docs-border);
+}
+
+.page-header h1 {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.page-header .page-header__description {
+  margin: 0.375rem 0 0 0;
+  color: var(--docs-text-secondary);
+}
+
+h2 {
+  font-size: 1.6rem;
+  font-weight: 500;
+  color: var(--docs-primary);
+  margin: 2.5rem 0 0.75rem 0;
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid rgba(8, 67, 191, 0.2);
+}
+
+h3 {
+  font-size: 1.4rem;
+  font-weight: 500;
+  color: var(--docs-text);
+  margin: 2.5rem 0 1rem 0;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--docs-border);
+}
+
+h4 {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--docs-text);
+  margin: 2rem 0 0.75rem 0;
+}
+
+h5 {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--docs-primary);
+  margin: 1.25rem 0 0.375rem 0;
+}
+
+h6 {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--docs-text-muted);
+  margin: 1rem 0 0.375rem 0;
+}
+
+p {
+  margin: 0 0 0.875rem 0;
+  line-height: 1.65;
+}
+
+strong {
+  font-weight: 600;
+  color: var(--docs-text);
+}
+
+/* --------------------------------------------------------------------------
+   Links (docs: blue, faint underline that darkens on hover)
+   -------------------------------------------------------------------------- */
+
+a {
+  color: var(--docs-primary);
+  text-decoration: underline;
+  text-decoration-color: rgba(8, 67, 191, 0.3);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  transition: text-decoration-color 0.15s ease;
+}
+
+a:hover {
+  text-decoration-color: var(--docs-primary);
+}
+
+/* --------------------------------------------------------------------------
+   Code, kbd, hr, blockquote
+   -------------------------------------------------------------------------- */
+
+code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 0.125rem 0.375rem;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  color: var(--docs-text);
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 1rem;
+  margin: 0 0 1rem 0;
+  background: var(--docs-bg-subtle);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--shadow-hard);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+pre code {
+  padding: 0;
+  background: transparent;
+  border: none;
+  font-size: inherit;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 0.125rem 0.375rem;
+  background: var(--docs-bg-subtle);
+  border: 1px solid var(--docs-border);
+  border-bottom-width: 2px;
+  color: var(--docs-text);
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--docs-border);
+  margin: 1.5rem 0;
+}
+
+blockquote {
+  margin: 0 0 1rem 0;
+  padding: 0.75rem 1rem;
+  border-left: 3px solid var(--docs-border);
+  background: var(--docs-bg-subtle);
+  color: var(--docs-text-secondary);
+}
+
+/* --------------------------------------------------------------------------
+   Mono label utility — the small allcaps industrial labels used all over
+   the docs (admonition title bars, table headers, breadcrumbs, captions)
+   -------------------------------------------------------------------------- */
+
+.mono-label {
+  font-family: var(--font-mono-display);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.mono-label--muted {
+  color: var(--docs-text-muted);
+}
+
+.mono-label--primary {
+  color: var(--docs-primary);
+}
+
+/* --------------------------------------------------------------------------
+   App shell layout — fixed top navbar (72px), left sidebar, content column.
+   Mirrors the docs layout: sticky header, sticky bordered sidebar, content
+   constrained to a generous max width.
+   -------------------------------------------------------------------------- */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.app-body {
+  flex: 1;
+  display: flex;
+  width: 100%;
+  max-width: var(--page-max-width);
+  margin: 0 auto;
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  padding: 1rem 2rem;
+}
+
+.app-content {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  padding: 0.5rem 2rem;
+}
+
+.app-content--wide {
+  max-width: 1100px;
+}
+
+@media (max-width: 996px) {
+  .app-main {
+    padding: 1rem 0.75rem;
+  }
+  .app-content {
+    padding: 0.5rem 0.25rem;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Card grid (docs .cards) — use with AppCard
+   -------------------------------------------------------------------------- */
+
+.card-grid {
+  display: grid;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.card-grid--cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.card-grid--cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.card-grid--cols-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 768px) {
+  .card-grid--cols-2,
+  .card-grid--cols-3,
+  .card-grid--cols-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Thin scrollbars (docs sidebar)
+   -------------------------------------------------------------------------- */
+
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #dee1e4 transparent;
+}
+
+.thin-scroll::-webkit-scrollbar {
+  width: 3px;
+}
+
+.thin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thin-scroll::-webkit-scrollbar-thumb {
+  background-color: #dee1e4;
+}
+
+.thin-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: var(--docs-text-muted);
+}
+
+/* --------------------------------------------------------------------------
+   Panel — bordered surface with the docs hard shadow (admonition style).
+   Optional title bar in "old OS window" style.
+   -------------------------------------------------------------------------- */
+
+.panel {
+  background: var(--docs-bg);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--shadow-hard);
+}
+
+.panel__titlebar {
+  font-family: var(--font-mono-display);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 0;
+  padding: 0.4rem 1rem;
+  background: #1f2937;
+  border-bottom: 1px solid #1f2937;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* window controls "– ×" on the right, like docs admonitions */
+.panel__titlebar::after {
+  content: '\2013\00a0\00a0\d7';
+  font-family: var(--font-mono-display);
+  font-size: 12px;
+  letter-spacing: 0;
+  margin-left: auto;
+  opacity: 0.6;
+}
+
+.panel__body {
+  padding: 0.75rem 1rem;
+}

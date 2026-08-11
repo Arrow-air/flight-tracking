@@ -1,0 +1,17 @@
+import { chromium } from 'playwright';
+const BASE = 'http://localhost:5199';
+const OUT = '/Users/hex/projects/arrow/flight-tracking/docs/build-logs/ui-style-r1/shots';
+const FLIGHT_ID = '9f99a9bf-68e9-4a87-92a8-503f9a59dd61';
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+await page.goto(BASE + '/login');
+await page.getByLabel('Email').fill('thomas@arrowair.com');
+await page.getByLabel('Password').fill('password123');
+await page.getByRole('button', { name: /sign in/i }).click();
+await page.waitForURL(BASE + '/', { timeout: 15000 });
+await page.goto(`${BASE}/flights/${FLIGHT_ID}`, { waitUntil: 'networkidle' });
+await page.waitForTimeout(3000);
+await page.screenshot({ path: `${OUT}/08-flight-card.png` });
+await page.screenshot({ path: `${OUT}/08-flight-card-full.png`, fullPage: true });
+console.log('reshot 08 ->', page.url());
+await browser.close();

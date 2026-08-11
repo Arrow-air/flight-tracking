@@ -8,3 +8,5 @@ fixtures/
 parser/.venv/
 run/RUNID
 backups/
+supabase/.branches/
+supabase/.temp/
