@@ -505,6 +505,15 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
           <span class="mono-label">{{ fmtBytes(l.size_bytes) }}</span>
           <AppBadge :status="l.status" square dot data-test="log-status">{{ l.status }}</AppBadge>
           <span class="fc-log__spacer" />
+          <router-link
+            v-if="l.status === 'parsed'"
+            class="fc-log__params"
+            :to="`/flights/${flightId}/params?log=${l.id}`"
+            title="Browse this log's parameters, or diff them against another flight"
+            data-test="view-params"
+          >
+            Params →
+          </router-link>
           <AppButton v-if="showRaw" size="sm" variant="secondary" @click="downloadRaw(l)">
             Raw .bin
           </AppButton>
@@ -760,6 +769,11 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
 
 .fc-log__spacer {
   flex: 1;
+}
+
+.fc-log__params {
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .fc-stats {

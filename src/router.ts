@@ -18,6 +18,7 @@ export const router = createRouter({
     { path: '/flights', component: () => import('./pages/Flights.vue') },
     { path: '/flights/new', component: () => import('./pages/QuickLog.vue') },
     { path: '/flights/:id', component: () => import('./pages/FlightCard.vue') },
+    { path: '/flights/:id/params', component: () => import('./pages/FlightParams.vue') },
     { path: '/upload', component: () => import('./pages/BulkUpload.vue') },
     { path: '/logs', component: () => import('./pages/LogStatus.vue') },
     {
