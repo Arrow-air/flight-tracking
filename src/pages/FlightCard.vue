@@ -43,7 +43,7 @@ import {
   requeueLog,
   DuplicateLogError,
 } from '../lib/logs';
-import { flightStartIso, flightWeatherCoords } from '../lib/flightMetrics';
+import { flightStartIso, flightWeatherCoords, modeTimeline } from '../lib/flightMetrics';
 import { fetchWeatherAt, weatherLine } from '../lib/weather';
 
 interface FlightFull extends Flight {
@@ -354,13 +354,16 @@ function gradeVariant(score: number | undefined): 'success' | 'warning' | 'dange
   return 'danger';
 }
 
-function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: number | null }[] {
-  const modes = s.modes ?? [];
-  return modes.map((m, i) => ({
-    mode: m.mode,
-    from: m.t_s,
-    to: modes[i + 1]?.t_s ?? s.duration_s ?? null,
-  }));
+// P1 (v2.2): duration_s is now ARMED flight time; how it was computed and
+// what the whole log spans, for the Duration stat's tooltip.
+function durationTitle(s: FlightLogSummary): string {
+  if (s.duration_source === 'armed') {
+    return s.log_duration_s != null
+      ? `Armed flight time (full log spans ${fmtDuration(s.log_duration_s)})`
+      : 'Armed flight time';
+  }
+  if (s.duration_source === 'full_log') return 'Full log span (no arm events in this log)';
+  return '';
 }
 </script>
 
@@ -541,7 +544,7 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
           <div class="fc-summary" data-test="log-summary">
             <!-- headline stats -->
             <div class="fc-stats">
-              <div class="fc-stat">
+              <div class="fc-stat" :title="durationTitle(summaryOf(l)!)">
                 <span class="fc-stat__label">Duration</span>
                 <span class="fc-stat__value">{{ fmtDuration(summaryOf(l)!.duration_s) }}</span>
               </div>

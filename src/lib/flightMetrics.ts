@@ -78,6 +78,43 @@ export function flightStartIso(
 }
 
 // ---------------------------------------------------------------------------
+// P1 (v2.2) — modes timeline segments.
+//
+// Mode/event `t_s` values are ABSOLUTE log seconds (parser: TimeUS / 1e6 —
+// NOT offset to the log's first message), so a log that idles on the pad
+// before arming has its first mode change at e.g. t_s ≈ 2163, not 0.
+// duration_s is therefore NEVER a valid segment endpoint: under the v2.2
+// semantics it is summed ARMED time (573.7 s on the bd0ee3e6 bug log while
+// the last mode's t_s is ~2163 — using it made `to - from` negative), and
+// even log_duration_s is a SPAN, not an absolute timestamp. The last
+// segment's end is the latest absolute t_s observed across modes and
+// events (DISARMED normally closes a real flight); when nothing later than
+// the last mode change is known, `to` stays null and no duration renders.
+// ---------------------------------------------------------------------------
+export interface ModeSegment {
+  mode: string;
+  from: number;
+  to: number | null;
+}
+
+export function modeTimeline(s: {
+  modes?: { t_s: number; mode: string }[] | null;
+  events?: { t_s: number }[] | null;
+}): ModeSegment[] {
+  const modes = s.modes ?? [];
+  let lastTs = -Infinity;
+  for (const e of s.events ?? []) {
+    if (typeof e?.t_s === 'number' && Number.isFinite(e.t_s) && e.t_s > lastTs) {
+      lastTs = e.t_s;
+    }
+  }
+  return modes.map((m, i) => {
+    const next = modes[i + 1]?.t_s ?? (lastTs > m.t_s ? lastTs : null);
+    return { mode: m.mode, from: m.t_s, to: next };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // D1 — weather coordinate source: prefer the log's coarse takeoff coords
 // (parser-rounded to 2 dp), fall back to the site's coordinates.
 // ---------------------------------------------------------------------------
