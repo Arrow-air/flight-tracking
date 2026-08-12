@@ -14,6 +14,7 @@ import AppCard from '../components/ui/AppCard.vue';
 import AppInput from '../components/ui/AppInput.vue';
 import AppTable from '../components/ui/AppTable.vue';
 import type { TableColumn } from '../components/ui/AppTable.vue';
+import ConfirmDialog from '../components/ui/ConfirmDialog.vue';
 import AlertBanner from '../components/AlertBanner.vue';
 import {
   canWriteAircraft,
@@ -36,6 +37,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { fmtDate, fmtDateTime, fmtDuration, toDatetimeLocal, fromDatetimeLocal } from '../lib/format';
 import { useRouter } from 'vue-router';
+import { countAircraftFlights, deleteAircraft } from '../lib/deletion';
 
 const route = useRoute();
 const router = useRouter();
@@ -213,6 +215,53 @@ async function revokeOperator(uid: string) {
     await Promise.all([loadOperators(), refreshProfile()]);
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+// --- delete aircraft (P3, admin-only) ---------------------------------------
+// RLS "admin delete aircraft" enforces admin-only; the button is also gated
+// on isAdmin so operators never see it. SAFE DEFAULT (RUN-CONTEXT-V22 P3):
+// the flights.aircraft_id FK is ON DELETE RESTRICT and deletion.ts re-checks
+// the live flight count — an aircraft with flights is never deleted (and its
+// flights are never silently cascaded away); the admin is told to delete or
+// reassign them first. Type-to-confirm (the serial) because the delete DOES
+// cascade operator grants, component events, airframe events and issues.
+const confirmingDelete = ref(false);
+const deleteBusy = ref(false);
+const deleteBlocked = ref('');
+
+async function startDeleteAircraft() {
+  if (!aircraft.value) return;
+  error.value = '';
+  deleteBlocked.value = '';
+  try {
+    // Live count (the page's flights list is capped at 50 rows).
+    const n = await countAircraftFlights(aircraft.value.id);
+    if (n > 0) {
+      deleteBlocked.value = `Cannot delete: this aircraft has ${n} flight${
+        n === 1 ? '' : 's'
+      }. Delete or reassign its flights first — flight history is never cascaded away.`;
+      return;
+    }
+    confirmingDelete.value = true;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function doDeleteAircraft() {
+  if (!aircraft.value) return;
+  error.value = '';
+  deleteBusy.value = true;
+  try {
+    await deleteAircraft(aircraft.value.id);
+    confirmingDelete.value = false;
+    await router.push('/');
+  } catch (e) {
+    confirmingDelete.value = false;
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    deleteBusy.value = false;
   }
 }
 
@@ -579,6 +628,48 @@ const kindVariant: Record<string, 'warning' | 'danger' | 'info'> = {
           <AppBadge :variant="value === 'private' ? 'neutral' : 'success'">{{ value }}</AppBadge>
         </template>
       </AppTable>
+
+      <!-- Danger zone (P3): admin-only aircraft delete -->
+      <template v-if="isAdmin">
+        <h2>Danger zone</h2>
+        <AlertBanner
+          v-if="deleteBlocked"
+          kind="error"
+          :message="deleteBlocked"
+          data-test="delete-blocked"
+        />
+        <p class="muted">
+          Deleting an aircraft removes its operator assignments, component
+          history, airframe events and issues. Aircraft with flights cannot be
+          deleted — delete or reassign the flights first.
+        </p>
+        <AppButton
+          size="sm"
+          variant="danger"
+          data-test="delete-aircraft"
+          style="margin-bottom: 2rem"
+          @click="startDeleteAircraft"
+        >
+          Delete aircraft
+        </AppButton>
+      </template>
+
+      <ConfirmDialog
+        v-if="confirmingDelete"
+        title="Delete this aircraft?"
+        confirm-label="Delete aircraft"
+        :require-text="aircraft.serial"
+        :busy="deleteBusy"
+        @confirm="doDeleteAircraft"
+        @cancel="confirmingDelete = false"
+      >
+        <p>
+          <strong>{{ aircraft.name || aircraft.serial }}</strong>
+          ({{ aircraft.serial }}) will be permanently deleted, along with its
+          operator assignments, component history, airframe events and issues.
+          It has no flights. This cannot be undone.
+        </p>
+      </ConfirmDialog>
     </template>
   </AppShell>
 </template>

@@ -7,12 +7,13 @@
  * Polls while any log is still uploaded/parsing.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import AppShell from '../components/AppShell.vue';
 import AppBadge from '../components/ui/AppBadge.vue';
 import AppButton from '../components/ui/AppButton.vue';
 import AppCard from '../components/ui/AppCard.vue';
 import AppInput from '../components/ui/AppInput.vue';
+import ConfirmDialog from '../components/ui/ConfirmDialog.vue';
 import AlertBanner from '../components/AlertBanner.vue';
 import { canViewRawGps, canWriteAircraft, userId } from '../lib/auth';
 import {
@@ -45,6 +46,7 @@ import {
 } from '../lib/logs';
 import { flightStartIso, flightWeatherCoords, modeTimeline } from '../lib/flightMetrics';
 import { fetchWeatherAt, weatherLine } from '../lib/weather';
+import { deleteFlight } from '../lib/deletion';
 
 interface FlightFull extends Flight {
   aircraft?: { id: string; serial: string; name: string | null; aircraft_types?: { name: string } | null } | null;
@@ -58,6 +60,7 @@ interface LogFull extends FlightLog {
 }
 
 const route = useRoute();
+const router = useRouter();
 const flightId = computed(() => String(route.params.id));
 
 const flight = ref<FlightFull | null>(null);
@@ -255,6 +258,38 @@ async function fetchWeatherIntoNotes() {
   }
 }
 
+// --- delete flight (P3) ------------------------------------------------------
+// Operators (canWrite) and admins; RLS "operators delete flights" enforces.
+// deletion.ts removes storage objects BEFORE the row delete (the storage
+// delete policies resolve through the flight_logs row — see the ordering
+// trap in src/lib/deletion.ts); the flights row delete then cascades through
+// flight_logs → summaries/series/params and notes/tags/payloads.
+const confirmingDelete = ref(false);
+const deleteBusy = ref(false);
+
+async function doDeleteFlight() {
+  if (!flight.value) return;
+  error.value = '';
+  deleteBusy.value = true;
+  try {
+    const res = await deleteFlight(flight.value.id);
+    confirmingDelete.value = false;
+    const orphanNote =
+      res.orphans.length > 0
+        ? ` ${res.orphans.length} storage object(s) could not be confirmed removed (listed in the browser console; the admin storage sweep reconciles them).`
+        : '';
+    await router.push({
+      path: '/flights',
+      query: { notice: `Flight deleted (${res.logCount} log(s) removed).${orphanNote}` },
+    });
+  } catch (e) {
+    confirmingDelete.value = false;
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    deleteBusy.value = false;
+  }
+}
+
 // --- add note --------------------------------------------------------------
 const noteBody = ref('');
 
@@ -425,6 +460,15 @@ function durationTitle(s: FlightLogSummary): string {
         </AppButton>
         <AppButton v-if="canWrite && !editing" size="sm" variant="secondary" @click="startEdit">
           Edit flight
+        </AppButton>
+        <AppButton
+          v-if="canWrite"
+          size="sm"
+          variant="danger"
+          data-test="delete-flight"
+          @click="confirmingDelete = true"
+        >
+          Delete flight
         </AppButton>
         <router-link
           v-if="flight.aircraft"
@@ -661,6 +705,28 @@ function durationTitle(s: FlightLogSummary): string {
         <AppInput v-model="noteBody" as="textarea" label="Add note" :rows="2" placeholder="Observation, anomaly, follow-up…" />
         <AppButton type="submit" size="sm" :disabled="!noteBody.trim()">Add note</AppButton>
       </form>
+
+      <ConfirmDialog
+        v-if="confirmingDelete"
+        title="Delete this flight?"
+        confirm-label="Delete flight"
+        :busy="deleteBusy"
+        @confirm="doDeleteFlight"
+        @cancel="confirmingDelete = false"
+      >
+        <p>
+          <strong>{{ flight.title || `Flight ${fmtDateTime(startIso)}` }}</strong>
+          will be permanently deleted, along with
+          {{ logs.length }} log{{ logs.length === 1 ? '' : 's' }} (parsed
+          summaries, series and parameters), {{ notes.length }}
+          note{{ notes.length === 1 ? '' : 's' }}, tags and payload records.
+        </p>
+        <p>
+          Log files in storage are removed where your permissions allow;
+          anything left behind is collected by the admin storage sweep. This
+          cannot be undone.
+        </p>
+      </ConfirmDialog>
     </template>
   </AppShell>
 </template>
