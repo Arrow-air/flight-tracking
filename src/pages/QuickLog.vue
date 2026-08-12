@@ -29,6 +29,7 @@ import { toDatetimeLocal, fromDatetimeLocal } from '../lib/format';
 import { extractLogInfo, sha256Hex } from '../lib/binlog';
 import { uploadFlightLog, findLogByChecksum, DuplicateLogError } from '../lib/logs';
 import { fetchWeatherAt, weatherLine, type WeatherSnapshot } from '../lib/weather';
+import { usableWeatherCoords } from '../lib/flightMetrics';
 
 const router = useRouter();
 
@@ -158,15 +159,20 @@ async function autofillWeather() {
   weatherError.value = '';
   weatherCoordSource.value = null;
   // D1: the log's coarse takeoff coordinate wins; site coords are fallback.
+  // P2 (v2.2): both sources go through usableWeatherCoords — the null
+  // island (GPS-stripped logs, coords zeroed) is never fetched.
   const site = selectedSite.value;
-  const coords = logCoords.value
-    ? { ...logCoords.value, source: 'log' as const }
-    : site && site.lat != null && site.lon != null
-      ? { lat: site.lat, lon: site.lon, source: 'site' as const }
+  const fromLog =
+    logCoords.value && usableWeatherCoords(logCoords.value.lat, logCoords.value.lon);
+  const fromSite = site && usableWeatherCoords(site.lat, site.lon);
+  const coords = fromLog
+    ? { ...fromLog, source: 'log' as const }
+    : fromSite
+      ? { ...fromSite, source: 'site' as const }
       : null;
   if (!coords) {
     weatherError.value =
-      'No coordinates available — attach a log with GPS or pick a site with coordinates (Sites page).';
+      'No coordinates available — attach a log with GPS or pick a site with coordinates (Sites page). Weather was not fetched.';
     return;
   }
   const when = form.value.started_at ? new Date(form.value.started_at) : null;

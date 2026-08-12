@@ -103,3 +103,84 @@ orphan knowingly; a service-role sweep reconciles.**
   between storage remove and row delete) leaves DB rows pointing at deleted
   objects — the flight simply still exists with missing artifacts, and
   re-deleting finishes the job. No data-loss path found.
+
+---
+
+## P4 / P5 / P6 / P7 / P2-app-side — app misc (builder round 1)
+
+### What shipped
+
+- **P4 — profile page** (`src/pages/Profile.vue`, route `/profile`): name,
+  email (from the GoTrue session — auth.users/user_profiles carry no
+  client-readable email), role badges, and the user's uuid in a selectable
+  `<code>` block with a Copy button (clipboard API; graceful "copy manually"
+  fallback when the API is unavailable). Linked from the existing navbar user
+  block in `AppShell.vue` (name/role chip is now a router-link,
+  `data-test="profile-link"`). No new queries — reads the auth store.
+- **P5 — manufacturer on the aircraft page** (`AircraftDetail.vue`): Identity
+  card gains a "Manufacturer" row showing the profile NAME for
+  `built_by ?? created_by` — the exact source field of the v21
+  "manufactured by me" filter (`filters.ts builtByUser`) — with a muted
+  "(record creator)" suffix when `built_by` is unset. Admin-only edit: a
+  Manufacturer select (all profiles + unset) rendered only for admins in the
+  registry edit form, and `built_by` is included in the UPDATE payload only
+  when `isAdmin` — a non-admin registry save can never touch it. NOTE
+  (known, from ARCH-NOTES §5): aircraft UPDATE RLS is operator-or-admin, so
+  an operator could PATCH built_by via raw API; not privilege-bearing, a
+  column-guard trigger is the strict fix if the critic wants it.
+- **P6 — fleet tile HOVER contrast** (`ui/AppCard.vue`): the hover rule
+  jumped the bayer dither from the v21 at-rest 0.06 to `opacity(1)` —
+  saturated blue pixels under body/meta text. Now
+  `saturate(1) opacity(0.14)` on hover (color still returns as affordance;
+  translateY lift + border/bg shift kept), and the 10px meta row darkens on
+  hover (`--docs-text-muted` → `--docs-text-secondary`). The v21 at-rest fix
+  (0.06 dither, #3d5270 body) is untouched.
+- **P7 — bulk upload shared title** (`BulkUpload.vue`): optional "Title
+  (applied to every flight)" input in the batch-defaults row;
+  `title: defaults.title.trim() || 'Bulk dump · <filename>'` — same
+  trim-or-fallback semantics as QuickLog's single-upload title; blank keeps
+  the existing per-file default exactly.
+- **P2 (app side) — weather null-island guard + hard error**:
+  - `flightMetrics.ts`: new `usableWeatherCoords(lat, lon)` — finite, in
+    range, and NOT within 0.005° of (0,0) on both axes (anything that
+    ROUNDS to the 2-dp null island; mirrors the parser's `_plausible_fix`
+    epsilon from the r1 parser commit). Single-zero-axis pairs stay valid.
+    `flightWeatherCoords` now screens BOTH log takeoff coords and site
+    coords through it.
+  - `weather.ts fetchWeatherAt`: belt-and-braces — THROWS
+    "refusing weather lookup for unusable coordinates" before any network
+    call; a missed caller guard surfaces loudly instead of fetching
+    equatorial-Atlantic data (the c39f3e92 failure).
+  - `FlightCard.vue`: fetch-weather button no longer silently disabled when
+    coords are missing — clicking with no usable coords shows the hard
+    error "No coordinates available for weather — set coordinates on this
+    flight's site (Sites page) or upload a log with GPS. Nothing was
+    fetched." (separate clear error for missing start time).
+  - `QuickLog.vue autofillWeather`: both coordinate sources go through
+    `usableWeatherCoords`; the existing no-coords error message kept and
+    clarified ("Weather was not fetched.").
+
+### Verification
+
+- `npm run build`, `npm run typecheck` green.
+- `npx vitest run`: **130 tests, 10 files, all green** (11 new: null-island
+  rejection in `flightWeatherCoords` incl. the c39f3e92 string-"0.00" shape,
+  `usableWeatherCoords` epsilon/range/zero-axis matrix, and
+  `weather.test.ts` proving `fetchWeatherAt` throws WITHOUT calling fetch
+  for (0,0)/near-zero/NaN/out-of-range and does reach fetch for real
+  coords).
+- Parser untouched this phase (P2 parser half landed in r1); pytest not
+  rerun here.
+- ui-smoke selectors checked (`start-bulk`, `.dropzone__pick`) — untouched;
+  full smoke left to the packager gate as before.
+
+### Risks / notes for the critic
+
+- P5 client-side-only gating of `built_by` (see NOTE above) — decision for
+  Thomas: add a column-guard trigger migration if operators must be blocked
+  at the DB layer.
+- P6 hover dither at 0.14 is a judgment call ("keep some hover affordance");
+  trivially tunable in one place (`AppCard.vue` hover `::before`).
+- FlightCard's weather button being always-enabled (error-on-click) is
+  deliberate per RUN-CONTEXT ("must show a clear error … instead of
+  fetching"); the tooltip still explains what's needed.

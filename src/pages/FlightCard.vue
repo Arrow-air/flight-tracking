@@ -233,10 +233,22 @@ const weatherBusy = ref(false);
 
 async function fetchWeatherIntoNotes() {
   if (!flight.value) return;
-  const coords = weatherCoords.value;
-  const whenIso = startIso.value;
-  if (!coords || !whenIso) return;
   error.value = '';
+  // P2 (v2.2): no usable coordinates (weatherCoords already refuses the
+  // null island) ⇒ hard error, and NOTHING is fetched. Flight c39f3e92 got
+  // equatorial-Atlantic weather from a GPS-stripped log's (0,0) before this.
+  const coords = weatherCoords.value;
+  if (!coords) {
+    error.value =
+      'No coordinates available for weather — set coordinates on this flight’s site (Sites page) or upload a log with GPS. Nothing was fetched.';
+    return;
+  }
+  const whenIso = startIso.value;
+  if (!whenIso) {
+    error.value =
+      'No start time known for this flight — set "Started" (Edit flight) or wait for a log to parse, then fetch weather.';
+    return;
+  }
   weatherBusy.value = true;
   try {
     const snap = await fetchWeatherAt(coords.lat, coords.lon, new Date(whenIso));
@@ -447,7 +459,7 @@ function durationTitle(s: FlightLogSummary): string {
           v-if="canWrite"
           size="sm"
           variant="secondary"
-          :disabled="weatherBusy || !weatherCoords || !startIso"
+          :disabled="weatherBusy"
           :title="
             weatherCoords
               ? `Open-Meteo at ${weatherCoords.source === 'log' ? 'coarse log takeoff' : 'site'} coordinates`

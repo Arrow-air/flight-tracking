@@ -5,6 +5,7 @@ import {
   flightStartIso,
   flightWeatherCoords,
   modeTimeline,
+  usableWeatherCoords,
   type LogWithSummary,
 } from './flightMetrics';
 
@@ -138,6 +139,56 @@ describe('flightWeatherCoords (D1)', () => {
   it('returns null when neither log nor site has coordinates', () => {
     expect(flightWeatherCoords([], { lat: null, lon: null })).toBeNull();
     expect(flightWeatherCoords(undefined, null)).toBeNull();
+  });
+
+  // P2 (v2.2): GPS-stripped logs land takeoff coords at the null island.
+  it('rejects (0,0) log takeoff coords and falls back to the site', () => {
+    const logs: LogWithSummary[] = [
+      { flight_log_summary: { takeoff_lat: 0, takeoff_lon: 0 } },
+    ];
+    expect(flightWeatherCoords(logs, site)).toEqual({
+      lat: 40.0,
+      lon: -105.0,
+      source: 'site',
+    });
+  });
+
+  it('rejects the c39f3e92 shape: "0.00"/"0.00" strings from PostgREST', () => {
+    const logs: LogWithSummary[] = [
+      { flight_log_summary: [{ takeoff_lat: '0.00', takeoff_lon: '0.00' }] },
+    ];
+    expect(flightWeatherCoords(logs, null)).toBeNull();
+  });
+
+  it('rejects a (0,0) site too — never any null-island fetch', () => {
+    expect(flightWeatherCoords([], { lat: 0, lon: 0 })).toBeNull();
+  });
+});
+
+describe('usableWeatherCoords (P2 v2.2 — null-island / validity guard)', () => {
+  it('accepts normal coordinates (numbers and PostgREST strings)', () => {
+    expect(usableWeatherCoords(30.04, -103.49)).toEqual({ lat: 30.04, lon: -103.49 });
+    expect(usableWeatherCoords('30.04', '-103.49')).toEqual({ lat: 30.04, lon: -103.49 });
+  });
+
+  it('rejects the exact null island and near-zero residue that ROUNDS to it', () => {
+    expect(usableWeatherCoords(0, 0)).toBeNull();
+    // parser rounds to 2 dp: |v| < 0.005 becomes 0.00 — same epsilon here
+    expect(usableWeatherCoords(0.004, -0.0049)).toBeNull();
+  });
+
+  it('keeps a single zero axis (equator / prime meridian crossings are real)', () => {
+    expect(usableWeatherCoords(0, -78.5)).toEqual({ lat: 0, lon: -78.5 });
+    expect(usableWeatherCoords(51.48, 0)).toEqual({ lat: 51.48, lon: 0 });
+  });
+
+  it('rejects out-of-range, non-finite, null and empty values', () => {
+    expect(usableWeatherCoords(91, 10)).toBeNull();
+    expect(usableWeatherCoords(45, 181)).toBeNull();
+    expect(usableWeatherCoords(NaN, 10)).toBeNull();
+    expect(usableWeatherCoords(null, 10)).toBeNull();
+    expect(usableWeatherCoords('', '')).toBeNull();
+    expect(usableWeatherCoords('garbage', '10')).toBeNull();
   });
 });
 

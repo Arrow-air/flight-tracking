@@ -65,9 +65,34 @@ const statusVariant: Record<string, 'success' | 'warning' | 'neutral'> = {
   retired: 'neutral',
 };
 
+// --- manufacturer (P5) -------------------------------------------------------
+// Same source field as the "manufactured by me" fleet filter
+// (filters.ts builtByUser): built_by when set, else the record's creator.
+// Display the profile NAME, never a bare uuid (user_profiles SELECT is
+// fleet-visible; names only — no emails client-side).
+const profileById = computed(
+  () => new Map(profiles.value.map((p) => [p.id, p])),
+);
+
+const manufacturerId = computed(() =>
+  aircraft.value ? (aircraft.value.built_by ?? aircraft.value.created_by) : null,
+);
+
+const manufacturerName = computed(() => {
+  const id = manufacturerId.value;
+  if (!id) return '—';
+  return profileById.value.get(id)?.name ?? `${id.slice(0, 8)}…`;
+});
+
 // --- registry edit ---------------------------------------------------------
 const editing = ref(false);
-const editForm = ref({ name: '', status: 'active', design_rev: '', notes: '' });
+const editForm = ref({
+  name: '',
+  status: 'active',
+  design_rev: '',
+  notes: '',
+  built_by: '',
+});
 
 function startEdit() {
   if (!aircraft.value) return;
@@ -76,6 +101,7 @@ function startEdit() {
     status: aircraft.value.status,
     design_rev: aircraft.value.design_rev ?? '',
     notes: aircraft.value.notes ?? '',
+    built_by: aircraft.value.built_by ?? '',
   };
   editing.value = true;
 }
@@ -84,14 +110,23 @@ async function saveEdit() {
   if (!aircraft.value) return;
   error.value = '';
   try {
+    const patch: Record<string, unknown> = {
+      name: editForm.value.name.trim() || null,
+      status: editForm.value.status,
+      design_rev: editForm.value.design_rev.trim() || null,
+      notes: editForm.value.notes.trim() || null,
+    };
+    // P5: manufacturer is ADMIN-only editable — the control is only
+    // rendered for admins, and the column is only sent for admins so a
+    // non-admin registry save can never touch it. (RLS allows operators to
+    // UPDATE aircraft rows; changing built_by isn't privilege-bearing, but
+    // the client keeps the field admin-scoped per the work item.)
+    if (isAdmin.value) {
+      patch.built_by = editForm.value.built_by || null;
+    }
     aircraft.value = {
       ...aircraft.value,
-      ...(await updateRow<Aircraft>('aircraft', aircraft.value.id, {
-        name: editForm.value.name.trim() || null,
-        status: editForm.value.status,
-        design_rev: editForm.value.design_rev.trim() || null,
-        notes: editForm.value.notes.trim() || null,
-      }, 'update aircraft')),
+      ...(await updateRow<Aircraft>('aircraft', aircraft.value.id, patch, 'update aircraft')),
       aircraft_types: aircraft.value.aircraft_types,
     };
     editing.value = false;
@@ -435,6 +470,11 @@ const kindVariant: Record<string, 'warning' | 'danger' | 'info'> = {
             <dt>Serial</dt><dd class="mono">{{ aircraft.serial }}</dd>
             <dt>Type</dt><dd>{{ aircraft.aircraft_types?.name ?? '—' }}</dd>
             <dt>Design rev</dt><dd class="mono">{{ aircraft.design_rev ?? '—' }}</dd>
+            <dt>Manufacturer</dt>
+            <dd data-test="manufacturer">
+              {{ manufacturerName }}
+              <span v-if="!aircraft.built_by" class="muted"> (record creator)</span>
+            </dd>
             <dt>Built</dt><dd>{{ fmtDate(aircraft.built_at) }}</dd>
           </dl>
           <template #meta>
@@ -494,6 +534,19 @@ const kindVariant: Record<string, 'warning' | 'danger' | 'info'> = {
             ]"
           />
           <AppInput v-model="editForm.design_rev" label="Design rev" mono />
+        </div>
+        <div v-if="isAdmin" class="edit-form__row">
+          <AppInput
+            v-model="editForm.built_by"
+            as="select"
+            label="Manufacturer (admin)"
+            hint="Who built this aircraft — drives the ‘manufactured by me’ filter"
+            data-test="edit-manufacturer"
+            :options="[
+              { label: '— unset (falls back to record creator) —', value: '' },
+              ...profiles.map((p) => ({ label: p.name ?? p.id, value: p.id })),
+            ]"
+          />
         </div>
         <AppInput v-model="editForm.notes" as="textarea" label="Notes" />
         <div class="edit-form__actions">

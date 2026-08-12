@@ -70,10 +70,17 @@ async function onSignOut() {
   <div class="app-shell">
     <AppNavbar label="Flight Tracking">
       <template #actions>
-        <span v-if="auth.profile" class="shell-user">
+        <!-- P4: the user block links to /profile (name, roles, copyable id) -->
+        <router-link
+          v-if="auth.profile"
+          class="shell-user"
+          to="/profile"
+          title="Your profile — name, roles and your user id"
+          data-test="profile-link"
+        >
           <span class="shell-user__name">{{ auth.profile.name ?? userEmail }}</span>
           <span class="shell-user__role">{{ roleLabel }}</span>
-        </span>
+        </router-link>
         <a class="navbar-action" href="#" data-test="sign-out" @click.prevent="onSignOut">
           Sign out
         </a>
@@ -101,6 +108,17 @@ async function onSignOut() {
   gap: 1px;
   margin-right: 0.5rem;
   color: #ffffff;
+  text-decoration: none;
+}
+
+.shell-user:hover {
+  color: #ffffff;
+  text-decoration: none;
+}
+
+.shell-user:hover .shell-user__name {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .shell-user__name {

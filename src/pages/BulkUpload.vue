@@ -47,7 +47,15 @@ const profiles = ref<Profile[]>([]);
 const error = ref('');
 const loading = ref(true);
 
-const defaults = ref({ aircraft_id: '', pilot_id: '', site_id: '', gps_private: true });
+// P7: `title` is the optional SHARED title applied to every flight stub in
+// the batch; blank keeps the per-file "Bulk dump · <filename>" default.
+const defaults = ref({
+  aircraft_id: '',
+  pilot_id: '',
+  site_id: '',
+  title: '',
+  gps_private: true,
+});
 
 const items = ref<Item[]>([]);
 const running = ref(false);
@@ -159,7 +167,9 @@ async function processAll() {
         pilot_id: defaults.value.pilot_id || null,
         site_id: defaults.value.site_id || null,
         started_at: time.toISOString(),
-        title: `Bulk dump · ${item.file.name}`,
+        // P7: shared batch title when set (same trim-or-fallback semantics
+        // as QuickLog's title insert); blank = the per-file default.
+        title: defaults.value.title.trim() || `Bulk dump · ${item.file.name}`,
         session_id: sessionId,
         gps_private: defaults.value.gps_private,
       }, `create flight stub for ${item.file.name}`);
@@ -271,6 +281,12 @@ const queuedCount = computed(
         label="Site"
         :options="[{ label: '—', value: '' }, ...sites.map((s) => ({ label: s.name, value: s.id }))]"
       />
+      <AppInput
+        v-model="defaults.title"
+        label="Title (applied to every flight)"
+        placeholder="blank = “Bulk dump · <filename>”"
+        data-test="bulk-title"
+      />
       <AppInput v-model="defaults.gps_private" as="checkbox" label="GPS private" />
     </div>
 
@@ -322,7 +338,7 @@ const queuedCount = computed(
 <style scoped>
 .bulk-defaults {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr auto;
+  grid-template-columns: 2fr 1fr 1fr 1.6fr auto;
   gap: 1rem;
   align-items: end;
   margin-bottom: 1.25rem;

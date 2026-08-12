@@ -131,10 +131,33 @@ function asFiniteNumber(v: number | string | null | undefined): number | null {
 }
 
 /**
+ * P2 (v2.2): a coordinate pair is usable for a weather lookup only when
+ * both values are finite, in range, and NOT the null island. GPS-stripped
+ * uploads zero their coords, and the parser's 2-dp rounding turns near-zero
+ * residue into exactly (0.00, 0.00) — flight c39f3e92 fetched
+ * equatorial-Atlantic weather that way. The epsilon (both |v| < 0.005,
+ * i.e. anything that ROUNDS to the 2-dp null island) mirrors the parser's
+ * _plausible_fix() guard. A single zero axis (equator/prime-meridian
+ * crossing) is still valid.
+ */
+export function usableWeatherCoords(
+  lat: number | string | null | undefined,
+  lon: number | string | null | undefined,
+): { lat: number; lon: number } | null {
+  const la = asFiniteNumber(lat);
+  const lo = asFiniteNumber(lon);
+  if (la == null || lo == null) return null;
+  if (Math.abs(la) > 90 || Math.abs(lo) > 180) return null;
+  if (Math.abs(la) < 0.005 && Math.abs(lo) < 0.005) return null;
+  return { lat: la, lon: lo };
+}
+
+/**
  * Pick the coordinate pair a weather lookup should use for a flight:
- * the first log summary carrying a coarse takeoff fix wins; otherwise the
- * site's coordinates; null when neither exists. (numeric columns can
- * arrive as strings through PostgREST — both are accepted.)
+ * the first log summary carrying a USABLE coarse takeoff fix wins;
+ * otherwise the site's coordinates (same usability bar); null when
+ * neither exists. (numeric columns can arrive as strings through
+ * PostgREST — both are accepted.)
  */
 export function flightWeatherCoords(
   logs: LogWithSummary[] | null | undefined,
@@ -142,12 +165,10 @@ export function flightWeatherCoords(
 ): WeatherCoords | null {
   for (const log of logs ?? []) {
     const s = embeddedSummary(log);
-    const lat = asFiniteNumber(s?.takeoff_lat);
-    const lon = asFiniteNumber(s?.takeoff_lon);
-    if (lat != null && lon != null) return { lat, lon, source: 'log' };
+    const c = usableWeatherCoords(s?.takeoff_lat, s?.takeoff_lon);
+    if (c) return { ...c, source: 'log' };
   }
-  if (site?.lat != null && site?.lon != null) {
-    return { lat: site.lat, lon: site.lon, source: 'site' };
-  }
+  const siteCoords = usableWeatherCoords(site?.lat, site?.lon);
+  if (siteCoords) return { ...siteCoords, source: 'site' };
   return null;
 }
