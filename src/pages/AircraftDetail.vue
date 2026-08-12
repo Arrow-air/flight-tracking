@@ -36,7 +36,7 @@ import {
 } from '../lib/db';
 import { supabase } from '../lib/supabase';
 import { fmtDate, fmtDateTime, fmtDuration, toDatetimeLocal, fromDatetimeLocal } from '../lib/format';
-import { flightDurationS } from '../lib/flightMetrics';
+import { flightDurationS, type LogWithSummary } from '../lib/flightMetrics';
 import { useRouter } from 'vue-router';
 import { countAircraftFlights, deleteAircraft } from '../lib/deletion';
 
@@ -48,7 +48,7 @@ const aircraft = ref<Aircraft | null>(null);
 const operators = ref<{ user_id: string; granted_at: string; profile: Profile | null }[]>([]);
 const componentEvents = ref<ComponentEvent[]>([]);
 const airframeEvents = ref<AirframeEvent[]>([]);
-const flights = ref<(Flight & { sites?: { name: string } | null })[]>([]);
+const flights = ref<(Flight & { sites?: { name: string } | null; flight_logs?: LogWithSummary[] })[]>([]);
 const components = ref<ComponentRow[]>([]);
 const profiles = ref<Profile[]>([]);
 
