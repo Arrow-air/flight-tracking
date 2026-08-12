@@ -7,12 +7,13 @@
  * Polls while any log is still uploaded/parsing.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import AppShell from '../components/AppShell.vue';
 import AppBadge from '../components/ui/AppBadge.vue';
 import AppButton from '../components/ui/AppButton.vue';
 import AppCard from '../components/ui/AppCard.vue';
 import AppInput from '../components/ui/AppInput.vue';
+import ConfirmDialog from '../components/ui/ConfirmDialog.vue';
 import AlertBanner from '../components/AlertBanner.vue';
 import { canViewRawGps, canWriteAircraft, userId } from '../lib/auth';
 import {
@@ -43,8 +44,9 @@ import {
   requeueLog,
   DuplicateLogError,
 } from '../lib/logs';
-import { flightStartIso, flightWeatherCoords } from '../lib/flightMetrics';
+import { flightStartIso, flightWeatherCoords, modeTimeline } from '../lib/flightMetrics';
 import { fetchWeatherAt, weatherLine } from '../lib/weather';
+import { deleteFlight } from '../lib/deletion';
 
 interface FlightFull extends Flight {
   aircraft?: { id: string; serial: string; name: string | null; aircraft_types?: { name: string } | null } | null;
@@ -58,6 +60,7 @@ interface LogFull extends FlightLog {
 }
 
 const route = useRoute();
+const router = useRouter();
 const flightId = computed(() => String(route.params.id));
 
 const flight = ref<FlightFull | null>(null);
@@ -230,10 +233,22 @@ const weatherBusy = ref(false);
 
 async function fetchWeatherIntoNotes() {
   if (!flight.value) return;
-  const coords = weatherCoords.value;
-  const whenIso = startIso.value;
-  if (!coords || !whenIso) return;
   error.value = '';
+  // P2 (v2.2): no usable coordinates (weatherCoords already refuses the
+  // null island) ⇒ hard error, and NOTHING is fetched. Flight c39f3e92 got
+  // equatorial-Atlantic weather from a GPS-stripped log's (0,0) before this.
+  const coords = weatherCoords.value;
+  if (!coords) {
+    error.value =
+      'No coordinates available for weather — set coordinates on this flight’s site (Sites page) or upload a log with GPS. Nothing was fetched.';
+    return;
+  }
+  const whenIso = startIso.value;
+  if (!whenIso) {
+    error.value =
+      'No start time known for this flight — set "Started" (Edit flight) or wait for a log to parse, then fetch weather.';
+    return;
+  }
   weatherBusy.value = true;
   try {
     const snap = await fetchWeatherAt(coords.lat, coords.lon, new Date(whenIso));
@@ -252,6 +267,38 @@ async function fetchWeatherIntoNotes() {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
     weatherBusy.value = false;
+  }
+}
+
+// --- delete flight (P3) ------------------------------------------------------
+// Operators (canWrite) and admins; RLS "operators delete flights" enforces.
+// deletion.ts removes storage objects BEFORE the row delete (the storage
+// delete policies resolve through the flight_logs row — see the ordering
+// trap in src/lib/deletion.ts); the flights row delete then cascades through
+// flight_logs → summaries/series/params and notes/tags/payloads.
+const confirmingDelete = ref(false);
+const deleteBusy = ref(false);
+
+async function doDeleteFlight() {
+  if (!flight.value) return;
+  error.value = '';
+  deleteBusy.value = true;
+  try {
+    const res = await deleteFlight(flight.value.id);
+    confirmingDelete.value = false;
+    const orphanNote =
+      res.orphans.length > 0
+        ? ` ${res.orphans.length} storage object(s) could not be confirmed removed (listed in the browser console; the admin storage sweep reconciles them).`
+        : '';
+    await router.push({
+      path: '/flights',
+      query: { notice: `Flight deleted (${res.logCount} log(s) removed).${orphanNote}` },
+    });
+  } catch (e) {
+    confirmingDelete.value = false;
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    deleteBusy.value = false;
   }
 }
 
@@ -354,13 +401,16 @@ function gradeVariant(score: number | undefined): 'success' | 'warning' | 'dange
   return 'danger';
 }
 
-function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: number | null }[] {
-  const modes = s.modes ?? [];
-  return modes.map((m, i) => ({
-    mode: m.mode,
-    from: m.t_s,
-    to: modes[i + 1]?.t_s ?? s.duration_s ?? null,
-  }));
+// P1 (v2.2): duration_s is now ARMED flight time; how it was computed and
+// what the whole log spans, for the Duration stat's tooltip.
+function durationTitle(s: FlightLogSummary): string {
+  if (s.duration_source === 'armed') {
+    return s.log_duration_s != null
+      ? `Armed flight time (full log spans ${fmtDuration(s.log_duration_s)})`
+      : 'Armed flight time';
+  }
+  if (s.duration_source === 'full_log') return 'Full log span (no arm events in this log)';
+  return '';
 }
 </script>
 
@@ -409,7 +459,7 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
           v-if="canWrite"
           size="sm"
           variant="secondary"
-          :disabled="weatherBusy || !weatherCoords || !startIso"
+          :disabled="weatherBusy"
           :title="
             weatherCoords
               ? `Open-Meteo at ${weatherCoords.source === 'log' ? 'coarse log takeoff' : 'site'} coordinates`
@@ -422,6 +472,15 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
         </AppButton>
         <AppButton v-if="canWrite && !editing" size="sm" variant="secondary" @click="startEdit">
           Edit flight
+        </AppButton>
+        <AppButton
+          v-if="canWrite"
+          size="sm"
+          variant="danger"
+          data-test="delete-flight"
+          @click="confirmingDelete = true"
+        >
+          Delete flight
         </AppButton>
         <router-link
           v-if="flight.aircraft"
@@ -541,7 +600,7 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
           <div class="fc-summary" data-test="log-summary">
             <!-- headline stats -->
             <div class="fc-stats">
-              <div class="fc-stat">
+              <div class="fc-stat" :title="durationTitle(summaryOf(l)!)">
                 <span class="fc-stat__label">Duration</span>
                 <span class="fc-stat__value">{{ fmtDuration(summaryOf(l)!.duration_s) }}</span>
               </div>
@@ -658,6 +717,28 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
         <AppInput v-model="noteBody" as="textarea" label="Add note" :rows="2" placeholder="Observation, anomaly, follow-up…" />
         <AppButton type="submit" size="sm" :disabled="!noteBody.trim()">Add note</AppButton>
       </form>
+
+      <ConfirmDialog
+        v-if="confirmingDelete"
+        title="Delete this flight?"
+        confirm-label="Delete flight"
+        :busy="deleteBusy"
+        @confirm="doDeleteFlight"
+        @cancel="confirmingDelete = false"
+      >
+        <p>
+          <strong>{{ flight.title || `Flight ${fmtDateTime(startIso)}` }}</strong>
+          will be permanently deleted, along with
+          {{ logs.length }} log{{ logs.length === 1 ? '' : 's' }} (parsed
+          summaries, series and parameters), {{ notes.length }}
+          note{{ notes.length === 1 ? '' : 's' }}, tags and payload records.
+        </p>
+        <p>
+          Log files in storage are removed where your permissions allow;
+          anything left behind is collected by the admin storage sweep. This
+          cannot be undone.
+        </p>
+      </ConfirmDialog>
     </template>
   </AppShell>
 </template>

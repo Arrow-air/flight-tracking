@@ -4,6 +4,7 @@
  * Recent dates use the forecast API (past_days window); older dates use the
  * historical archive API. No API key, no account.
  */
+import { usableWeatherCoords } from './flightMetrics';
 
 export interface WeatherSnapshot {
   hourIso: string;
@@ -80,6 +81,15 @@ export async function fetchWeatherAt(
   lon: number,
   when: Date,
 ): Promise<WeatherSnapshot | null> {
+  // P2 (v2.2): belt-and-braces — never call Open-Meteo for the null island
+  // (GPS-stripped logs) or out-of-range/non-finite coordinates. Callers
+  // should have screened with usableWeatherCoords(); this throws so a
+  // missed guard surfaces as a loud error, not equatorial-Atlantic data.
+  if (!usableWeatherCoords(lat, lon)) {
+    throw new Error(
+      `refusing weather lookup for unusable coordinates (${lat}, ${lon}) — no valid GPS position is known`,
+    );
+  }
   const ageDays = (Date.now() - when.getTime()) / 864e5;
   const date = isoDateUtc(when);
   const base = `latitude=${lat}&longitude=${lon}&hourly=${HOURLY_VARS}&timezone=UTC`;

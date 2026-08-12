@@ -60,6 +60,10 @@ const siteList = ref<Pick<Site, 'id' | 'name'>[]>([]);
 const profiles = ref<Pick<Profile, 'id' | 'name'>[]>([]);
 const loading = ref(true);
 const error = ref('');
+// P3: one-shot success notice handed over via ?notice= (e.g. after a flight
+// delete, whose page is gone). Captured on mount, then stripped from the URL
+// so the filter<->query sync below owns the query string again.
+const notice = ref(typeof route.query.notice === 'string' ? route.query.notice : '');
 
 function flightsQuery(summaryCols: string) {
   return supabase
@@ -95,6 +99,10 @@ async function loadFlights() {
 }
 
 onMounted(async () => {
+  if (notice.value) {
+    const { notice: _drop, ...rest } = route.query;
+    void router.replace({ query: rest });
+  }
   try {
     await Promise.all([
       loadFlights(),
@@ -290,6 +298,7 @@ const rows = computed(() =>
     </div>
 
     <AlertBanner v-if="error" kind="error" :message="error" />
+    <AlertBanner v-if="notice" kind="success" :message="notice" data-test="flights-notice" />
 
     <div class="flights-actions">
       <AppButton to="/flights/new">+ Quick log</AppButton>

@@ -21,6 +21,7 @@ export const router = createRouter({
     { path: '/flights/:id/params', component: () => import('./pages/FlightParams.vue') },
     { path: '/upload', component: () => import('./pages/BulkUpload.vue') },
     { path: '/logs', component: () => import('./pages/LogStatus.vue') },
+    { path: '/profile', component: () => import('./pages/Profile.vue') },
     {
       path: '/admin',
       component: () => import('./pages/Admin.vue'),

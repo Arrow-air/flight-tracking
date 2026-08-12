@@ -14,6 +14,7 @@ import AppCard from '../components/ui/AppCard.vue';
 import AppInput from '../components/ui/AppInput.vue';
 import AppTable from '../components/ui/AppTable.vue';
 import type { TableColumn } from '../components/ui/AppTable.vue';
+import ConfirmDialog from '../components/ui/ConfirmDialog.vue';
 import AlertBanner from '../components/AlertBanner.vue';
 import {
   canWriteAircraft,
@@ -36,6 +37,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { fmtDate, fmtDateTime, fmtDuration, toDatetimeLocal, fromDatetimeLocal } from '../lib/format';
 import { useRouter } from 'vue-router';
+import { countAircraftFlights, deleteAircraft } from '../lib/deletion';
 
 const route = useRoute();
 const router = useRouter();
@@ -63,9 +65,34 @@ const statusVariant: Record<string, 'success' | 'warning' | 'neutral'> = {
   retired: 'neutral',
 };
 
+// --- manufacturer (P5) -------------------------------------------------------
+// Same source field as the "manufactured by me" fleet filter
+// (filters.ts builtByUser): built_by when set, else the record's creator.
+// Display the profile NAME, never a bare uuid (user_profiles SELECT is
+// fleet-visible; names only — no emails client-side).
+const profileById = computed(
+  () => new Map(profiles.value.map((p) => [p.id, p])),
+);
+
+const manufacturerId = computed(() =>
+  aircraft.value ? (aircraft.value.built_by ?? aircraft.value.created_by) : null,
+);
+
+const manufacturerName = computed(() => {
+  const id = manufacturerId.value;
+  if (!id) return '—';
+  return profileById.value.get(id)?.name ?? `${id.slice(0, 8)}…`;
+});
+
 // --- registry edit ---------------------------------------------------------
 const editing = ref(false);
-const editForm = ref({ name: '', status: 'active', design_rev: '', notes: '' });
+const editForm = ref({
+  name: '',
+  status: 'active',
+  design_rev: '',
+  notes: '',
+  built_by: '',
+});
 
 function startEdit() {
   if (!aircraft.value) return;
@@ -74,6 +101,7 @@ function startEdit() {
     status: aircraft.value.status,
     design_rev: aircraft.value.design_rev ?? '',
     notes: aircraft.value.notes ?? '',
+    built_by: aircraft.value.built_by ?? '',
   };
   editing.value = true;
 }
@@ -82,14 +110,23 @@ async function saveEdit() {
   if (!aircraft.value) return;
   error.value = '';
   try {
+    const patch: Record<string, unknown> = {
+      name: editForm.value.name.trim() || null,
+      status: editForm.value.status,
+      design_rev: editForm.value.design_rev.trim() || null,
+      notes: editForm.value.notes.trim() || null,
+    };
+    // P5: manufacturer is ADMIN-only editable — the control is only
+    // rendered for admins, and the column is only sent for admins so a
+    // non-admin registry save can never touch it. (RLS allows operators to
+    // UPDATE aircraft rows; changing built_by isn't privilege-bearing, but
+    // the client keeps the field admin-scoped per the work item.)
+    if (isAdmin.value) {
+      patch.built_by = editForm.value.built_by || null;
+    }
     aircraft.value = {
       ...aircraft.value,
-      ...(await updateRow<Aircraft>('aircraft', aircraft.value.id, {
-        name: editForm.value.name.trim() || null,
-        status: editForm.value.status,
-        design_rev: editForm.value.design_rev.trim() || null,
-        notes: editForm.value.notes.trim() || null,
-      }, 'update aircraft')),
+      ...(await updateRow<Aircraft>('aircraft', aircraft.value.id, patch, 'update aircraft')),
       aircraft_types: aircraft.value.aircraft_types,
     };
     editing.value = false;
@@ -213,6 +250,53 @@ async function revokeOperator(uid: string) {
     await Promise.all([loadOperators(), refreshProfile()]);
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+// --- delete aircraft (P3, admin-only) ---------------------------------------
+// RLS "admin delete aircraft" enforces admin-only; the button is also gated
+// on isAdmin so operators never see it. SAFE DEFAULT (RUN-CONTEXT-V22 P3):
+// the flights.aircraft_id FK is ON DELETE RESTRICT and deletion.ts re-checks
+// the live flight count — an aircraft with flights is never deleted (and its
+// flights are never silently cascaded away); the admin is told to delete or
+// reassign them first. Type-to-confirm (the serial) because the delete DOES
+// cascade operator grants, component events, airframe events and issues.
+const confirmingDelete = ref(false);
+const deleteBusy = ref(false);
+const deleteBlocked = ref('');
+
+async function startDeleteAircraft() {
+  if (!aircraft.value) return;
+  error.value = '';
+  deleteBlocked.value = '';
+  try {
+    // Live count (the page's flights list is capped at 50 rows).
+    const n = await countAircraftFlights(aircraft.value.id);
+    if (n > 0) {
+      deleteBlocked.value = `Cannot delete: this aircraft has ${n} flight${
+        n === 1 ? '' : 's'
+      }. Delete or reassign its flights first — flight history is never cascaded away.`;
+      return;
+    }
+    confirmingDelete.value = true;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+async function doDeleteAircraft() {
+  if (!aircraft.value) return;
+  error.value = '';
+  deleteBusy.value = true;
+  try {
+    await deleteAircraft(aircraft.value.id);
+    confirmingDelete.value = false;
+    await router.push('/');
+  } catch (e) {
+    confirmingDelete.value = false;
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    deleteBusy.value = false;
   }
 }
 
@@ -386,6 +470,11 @@ const kindVariant: Record<string, 'warning' | 'danger' | 'info'> = {
             <dt>Serial</dt><dd class="mono">{{ aircraft.serial }}</dd>
             <dt>Type</dt><dd>{{ aircraft.aircraft_types?.name ?? '—' }}</dd>
             <dt>Design rev</dt><dd class="mono">{{ aircraft.design_rev ?? '—' }}</dd>
+            <dt>Manufacturer</dt>
+            <dd data-test="manufacturer">
+              {{ manufacturerName }}
+              <span v-if="!aircraft.built_by" class="muted"> (record creator)</span>
+            </dd>
             <dt>Built</dt><dd>{{ fmtDate(aircraft.built_at) }}</dd>
           </dl>
           <template #meta>
@@ -445,6 +534,19 @@ const kindVariant: Record<string, 'warning' | 'danger' | 'info'> = {
             ]"
           />
           <AppInput v-model="editForm.design_rev" label="Design rev" mono />
+        </div>
+        <div v-if="isAdmin" class="edit-form__row">
+          <AppInput
+            v-model="editForm.built_by"
+            as="select"
+            label="Manufacturer (admin)"
+            hint="Who built this aircraft — drives the ‘manufactured by me’ filter"
+            data-test="edit-manufacturer"
+            :options="[
+              { label: '— unset (falls back to record creator) —', value: '' },
+              ...profiles.map((p) => ({ label: p.name ?? p.id, value: p.id })),
+            ]"
+          />
         </div>
         <AppInput v-model="editForm.notes" as="textarea" label="Notes" />
         <div class="edit-form__actions">
@@ -579,6 +681,48 @@ const kindVariant: Record<string, 'warning' | 'danger' | 'info'> = {
           <AppBadge :variant="value === 'private' ? 'neutral' : 'success'">{{ value }}</AppBadge>
         </template>
       </AppTable>
+
+      <!-- Danger zone (P3): admin-only aircraft delete -->
+      <template v-if="isAdmin">
+        <h2>Danger zone</h2>
+        <AlertBanner
+          v-if="deleteBlocked"
+          kind="error"
+          :message="deleteBlocked"
+          data-test="delete-blocked"
+        />
+        <p class="muted">
+          Deleting an aircraft removes its operator assignments, component
+          history, airframe events and issues. Aircraft with flights cannot be
+          deleted — delete or reassign the flights first.
+        </p>
+        <AppButton
+          size="sm"
+          variant="danger"
+          data-test="delete-aircraft"
+          style="margin-bottom: 2rem"
+          @click="startDeleteAircraft"
+        >
+          Delete aircraft
+        </AppButton>
+      </template>
+
+      <ConfirmDialog
+        v-if="confirmingDelete"
+        title="Delete this aircraft?"
+        confirm-label="Delete aircraft"
+        :require-text="aircraft.serial"
+        :busy="deleteBusy"
+        @confirm="doDeleteAircraft"
+        @cancel="confirmingDelete = false"
+      >
+        <p>
+          <strong>{{ aircraft.name || aircraft.serial }}</strong>
+          ({{ aircraft.serial }}) will be permanently deleted, along with its
+          operator assignments, component history, airframe events and issues.
+          It has no flights. This cannot be undone.
+        </p>
+      </ConfirmDialog>
     </template>
   </AppShell>
 </template>

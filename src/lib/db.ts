@@ -97,7 +97,17 @@ export interface HealthCheck {
 
 export interface FlightLogSummary {
   log_id: string;
+  /**
+   * P1 (migration 20260812130000): FLIGHT duration — summed armed spans
+   * (duration_source='armed'), falling back to the full log span when the
+   * log has no arm events (duration_source='full_log'). NOT a timeline
+   * endpoint: mode/event t_s are absolute log seconds (see modeTimeline).
+   */
   duration_s: number | null;
+  /** P1: total log span (first..last message), the pre-v2.2 duration_s. */
+  log_duration_s?: number | null;
+  /** P1: which window duration_s used (mirrors battery.stats_window). */
+  duration_source?: 'armed' | 'full_log' | null;
   distance_m: number | null;
   max_alt_m: number | null;
   max_speed_mps: number | null;

@@ -4,6 +4,8 @@ import {
   flightDurationS,
   flightStartIso,
   flightWeatherCoords,
+  modeTimeline,
+  usableWeatherCoords,
   type LogWithSummary,
 } from './flightMetrics';
 
@@ -137,5 +139,114 @@ describe('flightWeatherCoords (D1)', () => {
   it('returns null when neither log nor site has coordinates', () => {
     expect(flightWeatherCoords([], { lat: null, lon: null })).toBeNull();
     expect(flightWeatherCoords(undefined, null)).toBeNull();
+  });
+
+  // P2 (v2.2): GPS-stripped logs land takeoff coords at the null island.
+  it('rejects (0,0) log takeoff coords and falls back to the site', () => {
+    const logs: LogWithSummary[] = [
+      { flight_log_summary: { takeoff_lat: 0, takeoff_lon: 0 } },
+    ];
+    expect(flightWeatherCoords(logs, site)).toEqual({
+      lat: 40.0,
+      lon: -105.0,
+      source: 'site',
+    });
+  });
+
+  it('rejects the c39f3e92 shape: "0.00"/"0.00" strings from PostgREST', () => {
+    const logs: LogWithSummary[] = [
+      { flight_log_summary: [{ takeoff_lat: '0.00', takeoff_lon: '0.00' }] },
+    ];
+    expect(flightWeatherCoords(logs, null)).toBeNull();
+  });
+
+  it('rejects a (0,0) site too — never any null-island fetch', () => {
+    expect(flightWeatherCoords([], { lat: 0, lon: 0 })).toBeNull();
+  });
+});
+
+describe('usableWeatherCoords (P2 v2.2 — null-island / validity guard)', () => {
+  it('accepts normal coordinates (numbers and PostgREST strings)', () => {
+    expect(usableWeatherCoords(30.04, -103.49)).toEqual({ lat: 30.04, lon: -103.49 });
+    expect(usableWeatherCoords('30.04', '-103.49')).toEqual({ lat: 30.04, lon: -103.49 });
+  });
+
+  it('rejects the exact null island and near-zero residue that ROUNDS to it', () => {
+    expect(usableWeatherCoords(0, 0)).toBeNull();
+    // parser rounds to 2 dp: |v| < 0.005 becomes 0.00 — same epsilon here
+    expect(usableWeatherCoords(0.004, -0.0049)).toBeNull();
+  });
+
+  it('keeps a single zero axis (equator / prime meridian crossings are real)', () => {
+    expect(usableWeatherCoords(0, -78.5)).toEqual({ lat: 0, lon: -78.5 });
+    expect(usableWeatherCoords(51.48, 0)).toEqual({ lat: 51.48, lon: 0 });
+  });
+
+  it('rejects out-of-range, non-finite, null and empty values', () => {
+    expect(usableWeatherCoords(91, 10)).toBeNull();
+    expect(usableWeatherCoords(45, 181)).toBeNull();
+    expect(usableWeatherCoords(NaN, 10)).toBeNull();
+    expect(usableWeatherCoords(null, 10)).toBeNull();
+    expect(usableWeatherCoords('', '')).toBeNull();
+    expect(usableWeatherCoords('garbage', '10')).toBeNull();
+  });
+});
+
+describe('modeTimeline (P1 v2.2 — absolute t_s, duration_s no longer an endpoint)', () => {
+  it('bd0ee3e6 bug-log shape: pad idle before arming never yields a negative segment', () => {
+    // Real prod numbers: last mode change t_s≈2163.5 (absolute log seconds),
+    // DISARMED event t_s=2733.5, post-fix duration_s=573.7 (armed time).
+    // The old code used duration_s as the last end → to - from = -1589.8.
+    const segs = modeTimeline({
+      modes: [
+        { t_s: 2159.8, mode: 'STABILIZE' },
+        { t_s: 2163.5, mode: 'AUTO' },
+      ],
+      events: [
+        { t_s: 2163.5 }, // AUTO_ARMED
+        { t_s: 2733.5 }, // DISARMED
+      ],
+    });
+    expect(segs).toEqual([
+      { mode: 'STABILIZE', from: 2159.8, to: 2163.5 },
+      { mode: 'AUTO', from: 2163.5, to: 2733.5 },
+    ]);
+    for (const s of segs) {
+      if (s.to != null) expect(s.to).toBeGreaterThanOrEqual(s.from);
+    }
+  });
+
+  it('uses the latest event t_s even when events are unsorted', () => {
+    const segs = modeTimeline({
+      modes: [{ t_s: 10, mode: 'LOITER' }],
+      events: [{ t_s: 500 }, { t_s: 90 }],
+    });
+    expect(segs).toEqual([{ mode: 'LOITER', from: 10, to: 500 }]);
+  });
+
+  it('leaves the last segment open when no event is later than the last mode change', () => {
+    const segs = modeTimeline({
+      modes: [
+        { t_s: 5, mode: 'STABILIZE' },
+        { t_s: 60, mode: 'RTL' },
+      ],
+      events: [{ t_s: 12 }],
+    });
+    expect(segs[0]).toEqual({ mode: 'STABILIZE', from: 5, to: 60 });
+    expect(segs[1]).toEqual({ mode: 'RTL', from: 60, to: null });
+  });
+
+  it('handles missing events / non-finite t_s / empty modes', () => {
+    expect(modeTimeline({ modes: [{ t_s: 3, mode: 'AUTO' }] })).toEqual([
+      { mode: 'AUTO', from: 3, to: null },
+    ]);
+    expect(
+      modeTimeline({
+        modes: [{ t_s: 3, mode: 'AUTO' }],
+        events: [{ t_s: Number.NaN }],
+      }),
+    ).toEqual([{ mode: 'AUTO', from: 3, to: null }]);
+    expect(modeTimeline({ modes: null, events: null })).toEqual([]);
+    expect(modeTimeline({})).toEqual([]);
   });
 });

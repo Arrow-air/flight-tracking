@@ -91,8 +91,13 @@ withDefaults(
   transition: filter 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
+/* P6 (v2.2): the hover state used to jump the dither to FULL opacity —
+   saturated blue pixels rising under the body/meta text made tiles
+   unreadable exactly while hovering (the C1 at-rest fix above stays at
+   0.06). Keep the color returning as part of the affordance, but capped
+   low; the lift/border/background shift below carry the rest. */
 .card--link:hover::before {
-  filter: saturate(1) opacity(1);
+  filter: saturate(1) opacity(0.14);
 }
 
 .card--link:hover {
@@ -185,5 +190,12 @@ withDefaults(
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--docs-text-muted);
+  transition: color 0.15s ease;
+}
+
+/* P6: meta row darkens on hover like the body does — 10px muted text on
+   the tinted hover background + dither was the least readable element. */
+.card--link:hover .card__meta {
+  color: var(--docs-text-secondary, #4b5563);
 }
 </style>

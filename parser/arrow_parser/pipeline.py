@@ -72,6 +72,7 @@ def verify_sanitized(sanitized_path: str, raw_result: dict,
     rs, ss = raw_result["summary"], san["summary"]
     comps = {
         "duration_s": (rs["duration_s"], ss["duration_s"]),
+        "log_duration_s": (rs.get("log_duration_s"), ss.get("log_duration_s")),
         "armed_duration_s": (rs["armed_duration_s"], ss["armed_duration_s"]),
         "batt_volt_min": (rs["battery"]["volt_min"], ss["battery"]["volt_min"]),
         "batt_sag_v": (rs["battery"]["sag_v"], ss["battery"]["sag_v"]),
