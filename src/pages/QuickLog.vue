@@ -26,8 +26,8 @@ import {
 } from '../lib/db';
 import { supabase } from '../lib/supabase';
 import { toDatetimeLocal, fromDatetimeLocal } from '../lib/format';
-import { extractLogStartTime } from '../lib/binlog';
-import { uploadFlightLog, DuplicateLogError } from '../lib/logs';
+import { extractLogInfo, sha256Hex } from '../lib/binlog';
+import { uploadFlightLog, findLogByChecksum, DuplicateLogError } from '../lib/logs';
 import { fetchWeatherAt, weatherLine, type WeatherSnapshot } from '../lib/weather';
 
 const router = useRouter();
@@ -44,8 +44,9 @@ const form = ref({
   aircraft_id: '',
   pilot_id: '',
   site_id: '',
+  // F3: optional — leave as-is or clear it; the parser's log-derived
+  // start_time_utc wins on display once the log is parsed.
   started_at: toDatetimeLocal(new Date()),
-  ended_at: '',
   title: '',
   notes: '',
   tags: '',
@@ -53,12 +54,19 @@ const form = ref({
 });
 
 const logFile = ref<File | null>(null);
+const logChecksum = ref<string | null>(null);
 const logTimeNote = ref('');
+// F1: pre-upload duplicate detection (checksum lookup before any upload)
+const dupFlightId = ref<string | null>(null);
+// D1: COARSE takeoff coordinate read from the log head (2 dp, ~1.1 km) —
+// weather auto-fill prefers it over the site's coordinates.
+const logCoords = ref<{ lat: number; lon: number } | null>(null);
 
 // weather
 const weather = ref<WeatherSnapshot | null>(null);
 const weatherError = ref('');
 const weatherBusy = ref(false);
+const weatherCoordSource = ref<'log' | 'site' | null>(null);
 let weatherSeq = 0; // drop out-of-order responses (site/time changed mid-fetch)
 
 const writableAircraft = computed(() =>
@@ -82,6 +90,9 @@ onMounted(async () => {
         supabase.from('aircraft').select('*, aircraft_types(name)').order('serial'),
         'load aircraft',
       ),
+      // F2: sites have no operator edge in the schema — RLS already scopes
+      // this select to own + public (+ admin), so the dropdown is filtered
+      // server-side. Aircraft are scoped via writableAircraft above.
       selectRows<Site[]>(supabase.from('sites').select('*').order('name'), 'load sites'),
       selectRows<Profile[]>(
         supabase.from('user_profiles').select('id,name,roles,gps_default_private').order('name'),
@@ -104,13 +115,40 @@ async function onFilePicked(ev: Event) {
   const input = ev.target as HTMLInputElement;
   const f = input.files?.[0] ?? null;
   logFile.value = f;
+  logChecksum.value = null;
   logTimeNote.value = '';
+  dupFlightId.value = null;
+  logCoords.value = null;
   if (!f) return;
-  const { time, source } = await extractLogStartTime(f);
+
+  // F1: hash + look up the checksum BEFORE anything is created/uploaded.
+  // Re-picking a file while these awaits are in flight makes this run
+  // stale — guard every state write on logFile still being OUR file, or
+  // a slow hash of the old file would attach its checksum (and dup
+  // verdict) to the newly picked one.
+  const checksum = await sha256Hex(f);
+  if (logFile.value !== f) return;
+  const existing = await findLogByChecksum(checksum);
+  if (logFile.value !== f) return;
+  if (existing) {
+    logFile.value = null;
+    input.value = '';
+    dupFlightId.value = existing.flight_id;
+    logTimeNote.value = `${f.name} was already uploaded (checksum ${checksum.slice(0, 12)}…) — duplicate skipped.`;
+    return;
+  }
+  logChecksum.value = checksum;
+
+  const { time, source, lat, lon } = await extractLogInfo(f);
+  if (logFile.value !== f) return;
   form.value.started_at = toDatetimeLocal(time);
+  logCoords.value = lat != null && lon != null ? { lat, lon } : null;
   logTimeNote.value =
     source === 'gps'
-      ? `Start time read from the log's GPS clock (${time.toLocaleString()}).`
+      ? `Start time read from the log's GPS clock (${time.toLocaleString()}).` +
+        (logCoords.value
+          ? ' Takeoff coordinates found — weather will use them.'
+          : '')
       : `No GPS time found in the log head — using the file's modified time (${time.toLocaleString()}). The parser will refine it.`;
   void autofillWeather();
 }
@@ -118,9 +156,17 @@ async function onFilePicked(ev: Event) {
 async function autofillWeather() {
   weather.value = null;
   weatherError.value = '';
+  weatherCoordSource.value = null;
+  // D1: the log's coarse takeoff coordinate wins; site coords are fallback.
   const site = selectedSite.value;
-  if (!site || site.lat == null || site.lon == null) {
-    weatherError.value = 'Selected site has no coordinates — add them on the Sites page first.';
+  const coords = logCoords.value
+    ? { ...logCoords.value, source: 'log' as const }
+    : site && site.lat != null && site.lon != null
+      ? { lat: site.lat, lon: site.lon, source: 'site' as const }
+      : null;
+  if (!coords) {
+    weatherError.value =
+      'No coordinates available — attach a log with GPS or pick a site with coordinates (Sites page).';
     return;
   }
   const when = form.value.started_at ? new Date(form.value.started_at) : null;
@@ -131,13 +177,14 @@ async function autofillWeather() {
   weatherBusy.value = true;
   const seq = ++weatherSeq;
   try {
-    const snap = await fetchWeatherAt(site.lat, site.lon, when);
+    const snap = await fetchWeatherAt(coords.lat, coords.lon, when);
     if (seq !== weatherSeq) return; // a newer fetch superseded this one
     if (!snap) {
       weatherError.value = 'Open-Meteo returned no data for that time/place.';
       return;
     }
     weather.value = snap;
+    weatherCoordSource.value = coords.source;
   } catch (e) {
     if (seq !== weatherSeq) return;
     weatherError.value = `Weather lookup failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -150,7 +197,9 @@ async function autofillWeather() {
 watch(
   () => [form.value.site_id, form.value.started_at],
   () => {
-    if (siteHasCoords.value && form.value.started_at) void autofillWeather();
+    if ((logCoords.value || siteHasCoords.value) && form.value.started_at) {
+      void autofillWeather();
+    }
   },
 );
 
@@ -174,7 +223,6 @@ async function submit() {
       pilot_id: form.value.pilot_id || null,
       site_id: form.value.site_id || null,
       started_at: fromDatetimeLocal(form.value.started_at),
-      ended_at: fromDatetimeLocal(form.value.ended_at),
       title: form.value.title.trim() || null,
       notes: notes || null,
       gps_private: form.value.gps_private,
@@ -207,7 +255,7 @@ async function submit() {
     if (logFile.value) {
       busyStep.value = `Uploading ${logFile.value.name}…`;
       try {
-        await uploadFlightLog(flight.id, logFile.value);
+        await uploadFlightLog(flight.id, logFile.value, logChecksum.value ?? undefined);
       } catch (e) {
         if (e instanceof DuplicateLogError) {
           error.value = `Flight saved, but the log was skipped: ${e.message}`;
@@ -287,15 +335,24 @@ async function submit() {
       </div>
 
       <div class="ql-form__row">
-        <AppInput v-model="form.started_at" label="Started" type="datetime-local" required />
-        <AppInput v-model="form.ended_at" label="Ended" type="datetime-local" hint="Leave empty if the log will provide it" />
+        <AppInput
+          v-model="form.started_at"
+          label="Started"
+          type="datetime-local"
+          hint="Optional — the log's own clock takes precedence once parsed"
+        />
       </div>
 
       <!-- log attach -->
       <div class="ql-file">
         <label class="ql-file__label" for="ql-log">DataFlash log (.bin, optional)</label>
         <input id="ql-log" type="file" accept=".bin,.BIN" @change="onFilePicked" />
-        <p v-if="logTimeNote" class="ql-file__note">{{ logTimeNote }}</p>
+        <p v-if="logTimeNote" class="ql-file__note" :class="{ 'ql-file__note--warn': dupFlightId }">
+          {{ logTimeNote }}
+          <router-link v-if="dupFlightId" :to="`/flights/${dupFlightId}`">
+            Open the flight it belongs to →
+          </router-link>
+        </p>
       </div>
 
       <!-- weather -->
@@ -305,7 +362,7 @@ async function submit() {
           <AppButton
             size="sm"
             variant="secondary"
-            :disabled="weatherBusy || !siteHasCoords || !form.started_at"
+            :disabled="weatherBusy || (!logCoords && !siteHasCoords) || !form.started_at"
             data-test="fetch-weather"
             @click="autofillWeather"
           >
@@ -314,11 +371,18 @@ async function submit() {
         </div>
         <p v-if="weather" class="ql-weather__result" data-test="weather-result">
           {{ weatherLine(weather) }}
-          <span class="ql-weather__source">source: {{ weather.source }} — saved into the flight notes</span>
+          <span class="ql-weather__source">
+            source: {{ weather.source }}
+            <template v-if="weatherCoordSource">
+              at {{ weatherCoordSource === 'log' ? 'log takeoff coordinates (coarse)' : 'site coordinates' }}
+            </template>
+            — saved into the flight notes
+          </span>
         </p>
         <p v-else-if="weatherError" class="ql-weather__error">{{ weatherError }}</p>
         <p v-else class="ql-weather__hint">
-          Pick a site with coordinates and a start time — conditions come from
+          Attach a log with GPS (its coarse takeoff coordinates win) or pick a
+          site with coordinates, plus a start time — conditions come from
           Open-Meteo (keyless) and get appended to the notes.
         </p>
       </div>
@@ -394,6 +458,10 @@ async function submit() {
   margin: 0;
   font-size: 12px;
   color: var(--docs-text-muted);
+}
+
+.ql-file__note--warn {
+  color: #b45309;
 }
 
 .ql-weather {

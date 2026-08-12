@@ -61,7 +61,9 @@ withDefaults(
   text-decoration: none !important;
   border-radius: 0;
   border: 1px solid var(--card-border);
-  background: var(--card-bg);
+  /* C1: plain light background — the tinted --card-bg + dither made body
+     text hard to read; hover still shifts to the tinted hover color. */
+  background: var(--docs-bg, #ffffff);
   position: relative;
   isolation: isolate;
   box-shadow: none;
@@ -84,7 +86,8 @@ withDefaults(
   background-repeat: repeat-x;
   background-position: left bottom;
   background-size: 8px 130px;
-  filter: saturate(0) opacity(0.15);
+  /* C1: keep the signature dither but far fainter at rest */
+  filter: saturate(0) opacity(0.06);
   transition: filter 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
@@ -155,7 +158,8 @@ withDefaults(
 .card__body {
   padding: 0.2rem 0 0.5rem 0;
   font-size: 14px;
-  color: #6a7c95;
+  /* C1: darker body copy (was #6a7c95 — low contrast on the dither) */
+  color: #3d5270;
   line-height: 1.55;
   transition: color 0.15s ease;
 }
@@ -167,7 +171,7 @@ withDefaults(
 }
 
 .card--link:hover .card__body {
-  color: #3d5270;
+  color: var(--docs-text, #1f2a3d);
 }
 
 .card__meta {

@@ -52,6 +52,8 @@ export interface Site {
   created_by: string | null;
 }
 
+export type FlightIncident = 'none' | 'crash' | 'hard_landing' | 'systems' | 'other';
+
 export interface Flight {
   id: string;
   aircraft_id: string;
@@ -65,6 +67,9 @@ export interface Flight {
   session_id: string | null;
   gps_private: boolean;
   created_at: string;
+  /** E2 (migration 20260811120000): per-flight incident flag, default 'none'. */
+  incident: FlightIncident;
+  incident_notes: string | null;
 }
 
 export type FlightLogStatus = 'uploaded' | 'parsing' | 'parsed' | 'error';
@@ -96,6 +101,11 @@ export interface FlightLogSummary {
   distance_m: number | null;
   max_alt_m: number | null;
   max_speed_mps: number | null;
+  /** F3 (migration 20260811120000): log-derived start time, timestamptz. */
+  start_time_utc: string | null;
+  /** D1: COARSE takeoff coords, parser-rounded to 2 dp (~1.1 km). */
+  takeoff_lat: number | null;
+  takeoff_lon: number | null;
   battery: {
     volt_start?: number | null;
     volt_min?: number | null;

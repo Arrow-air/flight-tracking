@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
@@ -100,29 +101,48 @@ def _filtered_insert(conn, table: str, candidate: dict[str, Any],
     return True
 
 
+def utc_from_unix(unix_s: float | None) -> datetime | None:
+    """Parser start_time_utc is unix seconds; the flight_log_summary column
+    (migration 20260811120000) is timestamptz, so convert to a tz-aware
+    datetime psycopg can adapt. None passes through."""
+    if unix_s is None:
+        return None
+    return datetime.fromtimestamp(unix_s, tz=timezone.utc)
+
+
+def build_summary_row(log_id: Any, s: dict[str, Any]) -> dict[str, Any]:
+    """Candidate flight_log_summary row from a parser summary dict.
+    _filtered_insert keeps only keys with real columns, so keys may lead
+    the schema; takeoff_lat/lon arrive already rounded to 2 dp (summary.py
+    owns the privacy coarsening — nothing here may add precision)."""
+    return {
+        "log_id": log_id,
+        "duration_s": s["duration_s"],
+        "armed_duration_s": s["armed_duration_s"],
+        "distance_m": s["distance_m"],
+        "max_alt_m": s["max_alt_m"],
+        "max_speed_ms": s["max_speed_ms"],
+        "max_speed_mps": s["max_speed_ms"],  # landed schema column name
+        "start_time_utc": utc_from_unix(s.get("start_time_utc")),
+        "takeoff_lat": s.get("takeoff_lat"),
+        "takeoff_lon": s.get("takeoff_lon"),
+        "vehicle": s["vehicle"],
+        "battery": s["battery"],
+        "health": s["health"],
+        "modes": s["modes"],
+        "events": s["events"],
+        "errors": s["errors"],
+        "summary": s,  # jsonb overflow / full blob if column exists
+    }
+
+
 def write_results(conn: psycopg.Connection, log_id: Any,
                   result: dict[str, Any], sanitized_path: str | None) -> None:
     """Write summary/series/params + flip flight_logs to parsed.
     One transaction; raises (and rolls back) on any 0-row write."""
     s = result["summary"]
     try:
-        summary_row = {
-            "log_id": log_id,
-            "duration_s": s["duration_s"],
-            "armed_duration_s": s["armed_duration_s"],
-            "distance_m": s["distance_m"],
-            "max_alt_m": s["max_alt_m"],
-            "max_speed_ms": s["max_speed_ms"],
-            "max_speed_mps": s["max_speed_ms"],  # landed schema column name
-            "start_time_utc": s["start_time_utc"],
-            "vehicle": s["vehicle"],
-            "battery": s["battery"],
-            "health": s["health"],
-            "modes": s["modes"],
-            "events": s["events"],
-            "errors": s["errors"],
-            "summary": s,  # jsonb overflow / full blob if column exists
-        }
+        summary_row = build_summary_row(log_id, s)
         if not _filtered_insert(conn, "flight_log_summary", summary_row,
                                 jsonb_overflow_col="summary",
                                 conflict_col="log_id"):

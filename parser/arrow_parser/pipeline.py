@@ -81,6 +81,14 @@ def verify_sanitized(sanitized_path: str, raw_result: dict,
         if not _pct_close(a, b):
             problems.append(f"{name} mismatch raw={a} sanitized={b} (>1%)")
 
+    # A sanitized log has all GPS dropped, so re-parsing it must yield NO
+    # takeoff coordinate at all — anything else is a location leak in the
+    # public artifact.
+    for key in ("takeoff_lat", "takeoff_lon"):
+        if ss.get(key) is not None:
+            problems.append(
+                f"sanitized parse produced {key}={ss[key]} (location leak)")
+
     return {
         "ok": not problems,
         "problems": problems,

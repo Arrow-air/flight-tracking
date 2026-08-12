@@ -20,6 +20,7 @@ import {
   selectRows,
   updateRow,
   type Flight,
+  type FlightIncident,
   type FlightLog,
   type FlightLogSummary,
   type FlightNote,
@@ -42,6 +43,8 @@ import {
   requeueLog,
   DuplicateLogError,
 } from '../lib/logs';
+import { flightStartIso, flightWeatherCoords } from '../lib/flightMetrics';
+import { fetchWeatherAt, weatherLine } from '../lib/weather';
 
 interface FlightFull extends Flight {
   aircraft?: { id: string; serial: string; name: string | null; aircraft_types?: { name: string } | null } | null;
@@ -77,6 +80,12 @@ function summaryOf(l: LogFull): FlightLogSummary | null {
     ? (l.flight_log_summary[0] ?? null)
     : l.flight_log_summary;
 }
+
+// F3: display start prefers the parser's start_time_utc over the
+// hand-entered (now optional) started_at.
+const startIso = computed(() =>
+  flightStartIso(logs.value, flight.value?.started_at ?? null),
+);
 
 async function loadLogs() {
   logs.value = await selectRows<LogFull[]>(
@@ -149,10 +158,19 @@ const editForm = ref({
   title: '',
   site_id: '',
   started_at: '',
-  ended_at: '',
   notes: '',
   gps_private: true,
+  incident: 'none' as FlightIncident,
+  incident_notes: '',
 });
+
+const incidentOptions = [
+  { label: 'none', value: 'none' },
+  { label: 'crash', value: 'crash' },
+  { label: 'hard landing', value: 'hard_landing' },
+  { label: 'systems', value: 'systems' },
+  { label: 'other', value: 'other' },
+];
 
 function startEdit() {
   if (!flight.value) return;
@@ -162,9 +180,10 @@ function startEdit() {
     started_at: flight.value.started_at
       ? toDatetimeLocal(new Date(flight.value.started_at))
       : '',
-    ended_at: flight.value.ended_at ? toDatetimeLocal(new Date(flight.value.ended_at)) : '',
     notes: flight.value.notes ?? '',
     gps_private: flight.value.gps_private,
+    incident: flight.value.incident ?? 'none',
+    incident_notes: flight.value.incident_notes ?? '',
   };
   editing.value = true;
 }
@@ -173,19 +192,66 @@ async function saveEdit() {
   if (!flight.value) return;
   error.value = '';
   try {
+    // F3: the "ended" field is gone — duration comes from the parsed log.
     await updateRow('flights', flight.value.id, {
       title: editForm.value.title.trim() || null,
       site_id: editForm.value.site_id || null,
       started_at: fromDatetimeLocal(editForm.value.started_at),
-      ended_at: fromDatetimeLocal(editForm.value.ended_at),
       notes: editForm.value.notes.trim() || null,
       gps_private: editForm.value.gps_private,
+      // E2: incident classification (migration 20260811120000); notes only
+      // travel with a real incident.
+      incident: editForm.value.incident,
+      incident_notes:
+        editForm.value.incident !== 'none'
+          ? editForm.value.incident_notes.trim() || null
+          : null,
     }, 'update flight');
     editing.value = false;
     notice.value = 'Flight updated.';
     await loadAll();
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+// --- weather (D1) ----------------------------------------------------------
+// Prefer the parser's COARSE takeoff coordinate (flight_log_summary
+// takeoff_lat/lon, 2 dp ≈ 1.1 km) over the site's coordinates.
+const flightSite = computed(
+  () => sites.value.find((s) => s.id === flight.value?.site_id) ?? null,
+);
+
+const weatherCoords = computed(() =>
+  flightWeatherCoords(logs.value, flightSite.value),
+);
+
+const weatherBusy = ref(false);
+
+async function fetchWeatherIntoNotes() {
+  if (!flight.value) return;
+  const coords = weatherCoords.value;
+  const whenIso = startIso.value;
+  if (!coords || !whenIso) return;
+  error.value = '';
+  weatherBusy.value = true;
+  try {
+    const snap = await fetchWeatherAt(coords.lat, coords.lon, new Date(whenIso));
+    if (!snap) {
+      error.value = 'Open-Meteo returned no data for that time/place.';
+      return;
+    }
+    const line = `${weatherLine(snap)} [${coords.source === 'log' ? 'log takeoff coords' : 'site coords'}]`;
+    const existing = flight.value.notes ?? '';
+    await updateRow('flights', flight.value.id, {
+      notes: existing ? `${existing}\n\n${line}` : line,
+    }, 'save weather');
+    notice.value = `Weather added to notes (${coords.source === 'log' ? 'log takeoff coordinates' : 'site coordinates'}).`;
+    await loadAll();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    weatherBusy.value = false;
   }
 }
 
@@ -312,9 +378,18 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
     <template v-if="flight">
       <div class="page-header">
         <h1>
-          {{ flight.title || `Flight ${fmtDateTime(flight.started_at)}` }}
+          {{ flight.title || `Flight ${fmtDateTime(startIso)}` }}
           <AppBadge :variant="flight.gps_private ? 'neutral' : 'success'" square>
             GPS {{ flight.gps_private ? 'private' : 'shared' }}
+          </AppBadge>
+          <AppBadge
+            v-if="flight.incident !== 'none'"
+            variant="danger"
+            square
+            dot
+            data-test="incident-badge"
+          >
+            {{ flight.incident.replace('_', ' ') }}
           </AppBadge>
         </h1>
         <p class="page-header__description">
@@ -323,14 +398,28 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
             ({{ flight.aircraft.aircraft_types.name }})</template>
           · {{ flight.user_profiles?.name ?? 'unknown pilot' }}
           · {{ flight.sites?.name ?? 'no site' }}
-          · {{ fmtDateTime(flight.started_at) }}
-          <template v-if="flight.ended_at">→ {{ fmtDateTime(flight.ended_at) }}</template>
+          · {{ fmtDateTime(startIso) }}
         </p>
       </div>
 
       <div class="fc-meta">
         <span v-for="t in tagNames" :key="t"><AppBadge variant="primary">{{ t }}</AppBadge></span>
         <span class="fc-meta__spacer" />
+        <AppButton
+          v-if="canWrite"
+          size="sm"
+          variant="secondary"
+          :disabled="weatherBusy || !weatherCoords || !startIso"
+          :title="
+            weatherCoords
+              ? `Open-Meteo at ${weatherCoords.source === 'log' ? 'coarse log takeoff' : 'site'} coordinates`
+              : 'Needs a parsed log with takeoff coordinates or a site with coordinates'
+          "
+          data-test="fetch-weather"
+          @click="fetchWeatherIntoNotes"
+        >
+          {{ weatherBusy ? 'Fetching weather…' : 'Fetch weather → notes' }}
+        </AppButton>
         <AppButton v-if="canWrite && !editing" size="sm" variant="secondary" @click="startEdit">
           Edit flight
         </AppButton>
@@ -354,9 +443,32 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
           />
         </div>
         <div class="fc-edit__row">
-          <AppInput v-model="editForm.started_at" label="Started" type="datetime-local" />
-          <AppInput v-model="editForm.ended_at" label="Ended" type="datetime-local" />
+          <AppInput
+            v-model="editForm.started_at"
+            label="Started"
+            type="datetime-local"
+            hint="Optional — the log's own clock takes precedence once parsed"
+          />
         </div>
+        <div class="fc-edit__row">
+          <AppInput
+            v-model="editForm.incident"
+            as="select"
+            label="Incident"
+            :options="incidentOptions"
+            hint="E2: classifies this flight for fleet-data filtering"
+            data-test="incident-select"
+          />
+        </div>
+        <AppInput
+          v-if="editForm.incident !== 'none'"
+          v-model="editForm.incident_notes"
+          as="textarea"
+          label="Incident notes"
+          :rows="2"
+          placeholder="What happened? Root cause, damage, follow-up…"
+          data-test="incident-notes"
+        />
         <AppInput v-model="editForm.notes" as="textarea" label="Notes" />
         <AppInput v-model="editForm.gps_private" as="checkbox" label="GPS private" />
         <div class="fc-edit__actions">
@@ -364,6 +476,16 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
           <AppButton size="sm" variant="ghost" @click="editing = false">Cancel</AppButton>
         </div>
       </form>
+
+      <p
+        v-if="flight.incident !== 'none'"
+        class="fc-incident"
+        data-test="incident-line"
+      >
+        Incident — {{ flight.incident.replace('_', ' ') }}<template
+          v-if="flight.incident_notes"
+        >: {{ flight.incident_notes }}</template>
+      </p>
 
       <p v-if="flight.notes" class="fc-notes">{{ flight.notes }}</p>
 
@@ -383,6 +505,15 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
           <span class="mono-label">{{ fmtBytes(l.size_bytes) }}</span>
           <AppBadge :status="l.status" square dot data-test="log-status">{{ l.status }}</AppBadge>
           <span class="fc-log__spacer" />
+          <router-link
+            v-if="l.status === 'parsed'"
+            class="fc-log__params"
+            :to="`/flights/${flightId}/params?log=${l.id}`"
+            title="Browse this log's parameters, or diff them against another flight"
+            data-test="view-params"
+          >
+            Params →
+          </router-link>
           <AppButton v-if="showRaw" size="sm" variant="secondary" @click="downloadRaw(l)">
             Raw .bin
           </AppButton>
@@ -569,6 +700,16 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
   gap: 0.75rem;
 }
 
+.fc-incident {
+  font-size: 14px;
+  font-weight: 500;
+  color: #b91c1c;
+  border-left: 3px solid #b91c1c;
+  padding-left: 0.9rem;
+  margin-bottom: 0.75rem;
+  white-space: pre-wrap;
+}
+
 .fc-notes {
   white-space: pre-wrap;
   font-size: 14px;
@@ -628,6 +769,11 @@ function modeTimeline(s: FlightLogSummary): { mode: string; from: number; to: nu
 
 .fc-log__spacer {
   flex: 1;
+}
+
+.fc-log__params {
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .fc-stats {

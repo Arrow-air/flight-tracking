@@ -66,12 +66,31 @@ header.
 | `POLL_INTERVAL_S` | `5` |
 
 DB writes introspect table columns; unknown summary fields fold into a
-`summary` jsonb column when present. NOTE for schema/UI phases: the landed
-`flight_log_summary` has no columns (nor a `summary` overflow jsonb) for
-`armed_duration_s`, `start_time_utc`, `vehicle`, `max_alt_source`,
-`message_counts` — those are currently dropped on DB write (they remain in
-the CLI JSON). Adding the columns or a `summary jsonb` column makes db.py
-pick them up automatically.
+`summary` jsonb column when present. NOTE for schema/UI phases: as of
+migration `20260811120000` the summary table has columns for
+`start_time_utc` (timestamptz — db.py converts the parser's unix seconds,
+see `build_summary_row`) and the coarse `takeoff_lat`/`takeoff_lon`;
+`armed_duration_s`, `vehicle`, `max_alt_source`, `message_counts` still
+have no columns (nor a `summary` overflow jsonb) and are dropped on DB
+write (they remain in the CLI JSON). Adding columns or a `summary jsonb`
+column makes db.py pick them up automatically.
+
+## Takeoff coordinates (privacy)
+
+The summary carries a COARSE takeoff coordinate (`takeoff_lat`/
+`takeoff_lon`) for weather auto-fill: the first good GPS fix rounded to
+2 decimal places (~1.1 km) INSIDE the parser (`summary.py`) — precise
+coordinates never leave `parse_log`. flight_log_summary is fleet-visible
+under RLS, so do not add precision; the DB column is `numeric(5,2)` as
+defense in depth, and the sanitize verifier fails any sanitized file that
+still parses to a takeoff coordinate.
+
+## Tests
+
+`cd parser && .venv/bin/python -m pytest` (deps:
+`pip install -r requirements-dev.txt`). Fixture-based tests skip when
+`fixtures/nas-logs/` (gitignored) is absent. `tests/gate_round*.py` are
+older standalone harnesses, not pytest tests.
 
 ## Docker
 

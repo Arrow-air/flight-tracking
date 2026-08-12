@@ -1,10 +1,12 @@
 /**
  * Client-side helpers for ArduPilot DataFlash `.bin` files:
  *  - sha256Hex: checksum for dedupe (flight_logs.checksum UNIQUE)
- *  - extractLogStartTime: best-effort flight start from the log's own GPS
- *    time (FMT self-describing format → first GPS message with GWk > 0).
+ *  - extractLogInfo: best-effort flight start from the log's own GPS
+ *    time (FMT self-describing format → first GPS message with GWk > 0),
+ *    plus a COARSE (2 dp) first-fix coordinate for weather auto-fill (D1).
  *    Falls back to the file's mtime, labelled so the UI can say which one
  *    it used. The parser refines everything server-side later.
+ *  - extractLogStartTime: back-compat wrapper (time only).
  */
 
 const HEAD1 = 0xa3;
@@ -70,16 +72,35 @@ export interface LogStartTime {
   source: 'gps' | 'mtime';
 }
 
+export interface LogHeadInfo extends LogStartTime {
+  /** COARSE first-fix coordinate (rounded to 2 dp ≈ 1.1 km, matching the
+   *  parser's D1 privacy coarsening) — for weather auto-fill only; the
+   *  precise values never leave this function. Null when no valid fix is
+   *  found in the scanned head. */
+  lat: number | null;
+  lon: number | null;
+}
+
+/** Back-compat wrapper: start time only. */
+export async function extractLogStartTime(file: File): Promise<LogStartTime> {
+  const { time, source } = await extractLogInfo(file);
+  return { time, source };
+}
+
 /**
  * Walk the head of the log: collect FMT definitions, then decode GPS
- * messages until one carries a valid GPS week. Unknown message types force
- * a resync scan for the next 0xA3 0x95 header.
+ * messages until one carries a valid GPS week (start time) — the same
+ * message's Lat/Lng, when plausible, yields the coarse takeoff coordinate.
+ * Unknown message types force a resync scan for the next 0xA3 0x95 header.
  */
-export async function extractLogStartTime(file: File): Promise<LogStartTime> {
-  const fallback: LogStartTime = {
+export async function extractLogInfo(file: File): Promise<LogHeadInfo> {
+  const fallback: LogHeadInfo = {
     time: new Date(file.lastModified),
     source: 'mtime',
+    lat: null,
+    lon: null,
   };
+  let result: LogHeadInfo | null = null;
   try {
     const head = new Uint8Array(
       await file.slice(0, Math.min(SCAN_BYTES, file.size)).arrayBuffer(),
@@ -113,25 +134,39 @@ export async function extractLogStartTime(file: File): Promise<LogStartTime> {
         continue;
       }
       if (fmt.name === 'GPS' && i + fmt.length <= head.length) {
-        const t = decodeGpsTime(view, head, i + 3, fmt);
-        if (t) return { time: t, source: 'gps' };
+        const g = decodeGpsMsg(view, head, i + 3, fmt);
+        if (g) {
+          if (!result) {
+            result = { time: g.time, source: 'gps', lat: null, lon: null };
+          }
+          if (g.lat != null && g.lon != null) {
+            // D1 PRIVACY: coarsen to 2 dp before the value leaves here.
+            result.lat = Math.round(g.lat * 100) / 100;
+            result.lon = Math.round(g.lon * 100) / 100;
+            return result;
+          }
+          // time acquired but no position lock yet — keep scanning the
+          // head for the first plausible fix.
+        }
       }
       i += fmt.length;
     }
   } catch {
     // unreadable head → fall through to mtime
   }
-  return fallback;
+  return result ?? fallback;
 }
 
-function decodeGpsTime(
+function decodeGpsMsg(
   view: DataView,
   bytes: Uint8Array,
   payloadStart: number,
   fmt: MsgFormat,
-): Date | null {
+): { time: Date; lat: number | null; lon: number | null } | null {
   let gwk: number | null = null;
   let gms: number | null = null;
+  let lat: number | null = null;
+  let lon: number | null = null;
   let off = payloadStart;
   for (let f = 0; f < fmt.format.length && f < fmt.columns.length; f++) {
     const ch = fmt.format[f];
@@ -141,6 +176,9 @@ function decodeGpsTime(
     const col = fmt.columns[f];
     if (col === 'GWk' && ch === 'H') gwk = view.getUint16(off, true);
     if (col === 'GMS' && ch === 'I') gms = view.getUint32(off, true);
+    // Lat/Lng: 'L' = int32 degrees * 1e7 (ArduPilot DataFlash convention)
+    if (col === 'Lat' && ch === 'L') lat = view.getInt32(off, true) / 1e7;
+    if (col === 'Lng' && ch === 'L') lon = view.getInt32(off, true) / 1e7;
     off += size;
   }
   if (gwk == null || gms == null || gwk === 0) return null;
@@ -150,5 +188,12 @@ function decodeGpsTime(
   if (d.getTime() < Date.UTC(2010, 0, 1) || d.getTime() > Date.now() + 2 * 864e5) {
     return null;
   }
-  return d;
+  // plausibility: reject out-of-range and the (0,0) no-fix placeholder
+  const validFix =
+    lat != null &&
+    lon != null &&
+    Math.abs(lat) <= 90 &&
+    Math.abs(lon) <= 180 &&
+    !(lat === 0 && lon === 0);
+  return { time: d, lat: validFix ? lat : null, lon: validFix ? lon : null };
 }

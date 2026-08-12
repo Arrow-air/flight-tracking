@@ -16,6 +16,10 @@ import {
   signInWithGitHub,
   signUpWithEmail,
 } from '../lib/auth';
+import { consumeOAuthCallbackError } from '../lib/oauthCallback';
+// A3: real brand lockup (arrowair.com/img/brand/SVGs/) — darkblue variant
+// (#0943bf on transparent) for the white login panel.
+import lockupDarkblue from '../assets/brand/arrow-lockup-darkblue.svg';
 
 type Mode = 'signin' | 'signup' | 'reset';
 
@@ -29,6 +33,11 @@ const name = ref('');
 const busy = ref(false);
 const error = ref('');
 const notice = ref('');
+
+// A1: a denied/failed GitHub OAuth attempt bounces back here via the router
+// guard — surface the error GoTrue put in the callback URL (one-shot).
+const oauthError = consumeOAuthCallbackError();
+if (oauthError) error.value = `GitHub sign-in failed: ${oauthError}`;
 
 function switchMode(m: Mode) {
   mode.value = m;
@@ -83,7 +92,7 @@ async function github() {
   <div class="login">
     <div class="login__panel">
       <div class="login__brand">
-        <span class="login__wordmark">ARROW</span>
+        <img class="login__wordmark" :src="lockupDarkblue" alt="Arrow" />
         <span class="login__divider" aria-hidden="true" />
         <span class="login__label">Flight Tracking</span>
       </div>
@@ -148,10 +157,6 @@ async function github() {
         <a v-else href="#" @click.prevent="switchMode('signin')">Back to sign in</a>
       </div>
 
-      <p class="login__note">
-        New accounts start as <strong>operator</strong> with no aircraft
-        assignments — an admin grants roles and aircraft access.
-      </p>
     </div>
   </div>
 </template>
@@ -183,11 +188,9 @@ async function github() {
 }
 
 .login__wordmark {
-  font-family: var(--font-mono-display, var(--font-mono));
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  color: var(--brand-dark, #060528);
+  height: 30px;
+  width: auto;
+  display: block;
 }
 
 .login__divider {
@@ -241,12 +244,5 @@ async function github() {
   gap: 1rem;
   margin-top: 1.25rem;
   font-size: 13px;
-}
-
-.login__note {
-  margin: 1.25rem 0 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--docs-text-muted);
 }
 </style>
