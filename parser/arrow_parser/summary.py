@@ -61,6 +61,62 @@ def _downsample(t: list[float], v: list[float], max_points: int = SERIES_MAX_POI
     return [t[i] for i in idx], [v[i] for i in idx]
 
 
+def _plausible_fix(lat, lng) -> bool:
+    """Is (lat, lng) a believable GPS fix position? (P2 validity guard)
+
+    GPS-stripped uploads zero Lat/Lng while keeping Status>=3 (seen on prod
+    flight c39f3e92; sanitize.py-style strippers zero lat/lng-named fields in
+    kept messages), so fix-type alone is not sufficient. Any coordinate pair
+    that would round to the 2-dp null island (0.00, 0.00) — the resolution
+    takeoff coords are emitted at — or that is out of range is NOT a fix.
+    """
+    if lat is None or lng is None:
+        return False
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0):
+        return False
+    if abs(lat) < 0.005 and abs(lng) < 0.005:
+        return False
+    return True
+
+
+def _assemble_armed_intervals(
+        arm_events: list[tuple[float, bool]],
+        t_min_s: float | None,
+        t_max_s: float | None) -> tuple[float, list[tuple[float, float]]]:
+    """Collapse (ts, armed?) transitions into armed spans.
+
+    Logging usually starts at arm, so a leading disarm event implies
+    armed-from-log-start and a trailing arm implies armed-to-log-end.
+    Consecutive same-state events collapse; multi-arm cycles are summed.
+    Returns (armed_seconds_total, [(start_s, end_s), ...]). This is the ONE
+    arm/disarm code path — the battery stats window (_flight_volt_stats) and
+    duration_s both consume its output.
+    """
+    armed_s = 0.0
+    intervals: list[tuple[float, float]] = []
+    if not arm_events:
+        return armed_s, intervals
+    events = sorted(arm_events, key=lambda e: e[0])
+    cleaned: list[tuple[float, bool]] = []
+    for ev in events:
+        if not cleaned or cleaned[-1][1] != ev[1]:
+            cleaned.append(ev)
+    if cleaned and cleaned[0][1] is False and t_min_s is not None:
+        cleaned.insert(0, (t_min_s, True))
+    if cleaned and cleaned[-1][1] is True and t_max_s is not None:
+        cleaned.append((t_max_s, False))
+    armed_from = None
+    for ts_ev, armed in cleaned:
+        if armed and armed_from is None:
+            armed_from = ts_ev
+        elif not armed and armed_from is not None:
+            if ts_ev > armed_from:
+                intervals.append((armed_from, ts_ev))
+            armed_s += max(0.0, ts_ev - armed_from)
+            armed_from = None
+    return armed_s, intervals
+
+
 def _infer_cells(volt_first: float | None) -> int | None:
     """Guess LiPo cell count from initial pack voltage (near-full assumption).
 
@@ -236,7 +292,7 @@ def parse_log(path: str, cells: int | None = None) -> dict[str, Any]:
                 lat, lng = getattr(m, "Lat", None), getattr(m, "Lng", None)
                 if first_ts_unix is None:
                     first_ts_unix = getattr(m, "_timestamp", None)
-                if lat is not None and lng is not None and (lat or lng):
+                if _plausible_fix(lat, lng):
                     if first_fix is None:
                         first_fix = (lat, lng)
                     if last_fix is not None:
@@ -378,33 +434,26 @@ def parse_log(path: str, cells: int | None = None) -> dict[str, Any]:
                         vehicle = veh
                         break
 
-    duration_s = ((t_max_us - t_min_us) / 1e6
-                  if t_min_us is not None and t_max_us is not None else 0.0)
+    log_duration_s = ((t_max_us - t_min_us) / 1e6
+                      if t_min_us is not None and t_max_us is not None else 0.0)
 
-    # Assemble armed intervals. Logging usually starts at arm, so a leading
-    # disarm event implies armed-from-log-start; a trailing arm implies
-    # armed-to-log-end.
-    armed_s = 0.0
-    armed_intervals: list[tuple[float, float]] = []
-    if arm_events:
-        arm_events.sort(key=lambda e: e[0])
-        cleaned: list[tuple[float, bool]] = []
-        for ev in arm_events:
-            if not cleaned or cleaned[-1][1] != ev[1]:
-                cleaned.append(ev)
-        if cleaned and cleaned[0][1] is False and t_min_us is not None:
-            cleaned.insert(0, (t_min_us / 1e6, True))
-        if cleaned and cleaned[-1][1] is True and t_max_us is not None:
-            cleaned.append((t_max_us / 1e6, False))
-        armed_from = None
-        for ts_ev, armed in cleaned:
-            if armed and armed_from is None:
-                armed_from = ts_ev
-            elif not armed and armed_from is not None:
-                if ts_ev > armed_from:
-                    armed_intervals.append((armed_from, ts_ev))
-                armed_s += max(0.0, ts_ev - armed_from)
-                armed_from = None
+    armed_s, armed_intervals = _assemble_armed_intervals(
+        arm_events,
+        t_min_us / 1e6 if t_min_us is not None else None,
+        t_max_us / 1e6 if t_max_us is not None else None)
+
+    # P1 semantics fix: duration_s is FLIGHT time — the summed armed spans —
+    # not the total log span (logs often idle on the pad for most of the
+    # file; prod log 387be26687b7_00000027.BIN: 3745 s span, ~570 s armed).
+    # Fallback when the log carries no arm events: full log span (the old
+    # behavior). duration_source records which applied, mirroring
+    # battery.stats_window. The total span is preserved as log_duration_s.
+    if armed_intervals:
+        duration_s = armed_s
+        duration_source = "armed"
+    else:
+        duration_s = log_duration_s
+        duration_source = "full_log"
 
     cells_source = "aircraft_type"
     if cells is None:
@@ -449,6 +498,8 @@ def parse_log(path: str, cells: int | None = None) -> dict[str, Any]:
                if gps_max_alt is not None and gps_first_alt is not None else None)
     summary = {
         "duration_s": round(duration_s, 2),
+        "duration_source": duration_source,
+        "log_duration_s": round(log_duration_s, 2),
         "armed_duration_s": round(armed_s, 2),
         "distance_m": round(dist_m, 1) if last_fix is not None else None,
         "max_alt_m": (round(baro_max, 1) if baro_max is not None

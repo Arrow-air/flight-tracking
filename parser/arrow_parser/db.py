@@ -118,6 +118,8 @@ def build_summary_row(log_id: Any, s: dict[str, Any]) -> dict[str, Any]:
     return {
         "log_id": log_id,
         "duration_s": s["duration_s"],
+        "duration_source": s.get("duration_source"),
+        "log_duration_s": s.get("log_duration_s"),
         "armed_duration_s": s["armed_duration_s"],
         "distance_m": s["distance_m"],
         "max_alt_m": s["max_alt_m"],
