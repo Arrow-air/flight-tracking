@@ -3,6 +3,7 @@ import {
   activeHidePrefixes,
   addCustomPrefix,
   applyParamFilters,
+  paramFileContent,
   DEFAULT_HIDE_PREFIXES,
   defaultHideState,
   diffCounts,
@@ -298,5 +299,25 @@ describe('fmtParamValue', () => {
     expect(fmtParamValue(0.30000001192092896)).toBe('0.3');
     expect(fmtParamValue(4.5)).toBe('4.5');
     expect(fmtParamValue(0.0025000000558793545)).toBe('0.0025');
+  });
+});
+
+describe('paramFileContent', () => {
+  it('emits sorted NAME,VALUE lines with a header and trailing newline', () => {
+    const out = paramFileContent({ B_PARAM: 2, A_PARAM: 0.30000001192092896 }, 'log abc');
+    expect(out).toBe(
+      '# Arrow flight tracking param export — log abc\nA_PARAM,0.3\nB_PARAM,2\n',
+    );
+  });
+
+  it('skips null (non-finite) values and reports the count in the header', () => {
+    const out = paramFileContent({ GOOD: 1, BAD: null }, 'x');
+    expect(out).toContain('# 1 param(s) with non-finite logged values omitted');
+    expect(out).toContain('GOOD,1');
+    expect(out).not.toContain('BAD');
+  });
+
+  it('handles an empty map', () => {
+    expect(paramFileContent({}, 'x')).toBe('# Arrow flight tracking param export — x\n');
   });
 });

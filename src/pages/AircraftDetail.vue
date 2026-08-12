@@ -36,6 +36,7 @@ import {
 } from '../lib/db';
 import { supabase } from '../lib/supabase';
 import { fmtDate, fmtDateTime, fmtDuration, toDatetimeLocal, fromDatetimeLocal } from '../lib/format';
+import { flightDurationS } from '../lib/flightMetrics';
 import { useRouter } from 'vue-router';
 import { countAircraftFlights, deleteAircraft } from '../lib/deletion';
 
@@ -360,7 +361,7 @@ onMounted(async () => {
       selectRows<typeof flights.value>(
         supabase
           .from('flights')
-          .select('*, sites(name)')
+          .select('*, sites(name), flight_logs(id,flight_log_summary(duration_s))')
           .eq('aircraft_id', aircraftId.value)
           .order('started_at', { ascending: false, nullsFirst: false })
           .limit(50),
@@ -420,10 +421,7 @@ const flightRows = computed(() =>
     started_at: fmtDateTime(f.started_at),
     title: f.title ?? '(untitled)',
     site: f.sites?.name ?? '—',
-    duration:
-      f.started_at && f.ended_at
-        ? fmtDuration((new Date(f.ended_at).getTime() - new Date(f.started_at).getTime()) / 1000)
-        : '—',
+    duration: fmtDuration(flightDurationS(f.flight_logs, f.started_at, f.ended_at)),
     gps: f.gps_private ? 'private' : 'shared',
   })),
 );
