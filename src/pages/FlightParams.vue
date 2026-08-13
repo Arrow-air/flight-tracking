@@ -37,6 +37,7 @@ import {
   paramRows,
   prefixToggles,
   removeCustomPrefix,
+  paramFileContent,
   saveHideState,
   toggleHidePrefix,
   type ParamDiffRow,
@@ -206,6 +207,21 @@ watch([selLogId, vsFlightId, vsLogId], ([log, vs, vslog]) => {
   }
 });
 
+// --- .param download -------------------------------------------------------
+function downloadParamFile(): void {
+  const map = paramsA.value;
+  if (!map || !selLogId.value) return;
+  const shortLog = selLogId.value.slice(0, 8);
+  const content = paramFileContent(map, `flight ${flightId.value} log ${selLogId.value}`);
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `flight-${flightId.value.slice(0, 8)}-log-${shortLog}.param`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // --- derived rows ----------------------------------------------------------
 const paramsA = computed<ParamMap | null | undefined>(() =>
   selLogId.value ? snapshots.value.get(selLogId.value) : null,
@@ -370,6 +386,16 @@ function kindVariant(kind: ParamDiffRow['kind']): 'warning' | 'success' | 'dange
             mono
             data-test="param-search"
           />
+          <AppButton
+            size="sm"
+            variant="secondary"
+            :disabled="!paramsA"
+            title="Download this log's full parameter set as an ArduPilot .param file (hide filters do not apply)"
+            data-test="param-download"
+            @click="downloadParamFile"
+          >
+            Download .param
+          </AppButton>
         </div>
 
         <!-- G3: prefix hide filters — always visible with counts -->

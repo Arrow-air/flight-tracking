@@ -287,3 +287,33 @@ export function fmtParamValue(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return '—';
   return String(Number(v.toPrecision(7)));
 }
+
+// ---------------------------------------------------------------------------
+// .param export
+// ---------------------------------------------------------------------------
+
+/**
+ * ParamMap -> ArduPilot .param file content: `NAME,VALUE` lines, name-sorted,
+ * `#` header comment (Mission Planner / QGC both skip comment lines).
+ * Params whose logged value was non-finite (null) are skipped — a .param file
+ * line can't express them and loading one would corrupt the target's value —
+ * and reported in the header so skipped ≠ silently missing.
+ */
+export function paramFileContent(map: ParamMap, sourceLabel: string): string {
+  const names = Object.keys(map).sort();
+  const lines: string[] = [];
+  let skipped = 0;
+  for (const name of names) {
+    const v = map[name];
+    if (v == null || !Number.isFinite(v)) {
+      skipped += 1;
+      continue;
+    }
+    lines.push(`${name},${fmtParamValue(v)}`);
+  }
+  const header = [
+    `# Arrow flight tracking param export — ${sourceLabel}`,
+    ...(skipped > 0 ? [`# ${skipped} param(s) with non-finite logged values omitted`] : []),
+  ];
+  return [...header, ...lines, ''].join('\n');
+}
