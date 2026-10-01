@@ -6,7 +6,7 @@
  * admins + owners of a gps_private flight, sanitized copy for everyone.
  * Polls while any log is still uploaded/parsing.
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppShell from '../components/AppShell.vue';
 import AppBadge from '../components/ui/AppBadge.vue';
@@ -45,7 +45,7 @@ import {
   DuplicateLogError,
 } from '../lib/logs';
 import { flightStartIso, flightWeatherCoords, modeTimeline } from '../lib/flightMetrics';
-import { fetchWeatherAt, weatherLine } from '../lib/weather';
+import { fetchWeatherAt, hasWeatherLine, weatherLine } from '../lib/weather';
 import { deleteFlight } from '../lib/deletion';
 
 interface FlightFull extends Flight {
@@ -229,46 +229,53 @@ const weatherCoords = computed(() =>
   flightWeatherCoords(logs.value, flightSite.value),
 );
 
+// Weather is fetched automatically, once: when a writer opens a flight whose
+// notes carry no weather line yet and coordinates + start time are known.
+// (The old "Fetch weather → notes" button appended a line per click.)
 const weatherBusy = ref(false);
+let weatherAttemptedFor: string | null = null;
+const logsPending = computed(() =>
+  logs.value.some((l) => l.status === 'uploaded' || l.status === 'parsing'),
+);
 
-async function fetchWeatherIntoNotes() {
-  if (!flight.value) return;
-  error.value = '';
-  // P2 (v2.2): no usable coordinates (weatherCoords already refuses the
-  // null island) ⇒ hard error, and NOTHING is fetched. Flight c39f3e92 got
-  // equatorial-Atlantic weather from a GPS-stripped log's (0,0) before this.
+async function autofillWeatherIntoNotes() {
+  const f = flight.value;
+  // P2 (v2.2): weatherCoords refuses the null island, so a GPS-stripped log
+  // yields null here and nothing is fetched.
   const coords = weatherCoords.value;
-  if (!coords) {
-    error.value =
-      'No coordinates available for weather — set coordinates on this flight’s site (Sites page) or upload a log with GPS. Nothing was fetched.';
-    return;
-  }
   const whenIso = startIso.value;
-  if (!whenIso) {
-    error.value =
-      'No start time known for this flight — set "Started" (Edit flight) or wait for a log to parse, then fetch weather.';
-    return;
-  }
+  if (!f || !canWrite.value || weatherBusy.value || weatherAttemptedFor === f.id) return;
+  // Wait for parsing so the coarse log takeoff coords win over the site's.
+  if (!coords || !whenIso || logsPending.value || hasWeatherLine(f.notes)) return;
+  weatherAttemptedFor = f.id;
   weatherBusy.value = true;
   try {
     const snap = await fetchWeatherAt(coords.lat, coords.lon, new Date(whenIso));
-    if (!snap) {
-      error.value = 'Open-Meteo returned no data for that time/place.';
-      return;
-    }
+    if (!snap) return;
+    // Re-read notes so a second open tab can't append a duplicate.
+    const [fresh] = await selectRows<{ notes: string | null }[]>(
+      supabase.from('flights').select('notes').eq('id', f.id).limit(1),
+      'load notes for weather',
+    );
+    if (!fresh || hasWeatherLine(fresh.notes)) return;
     const line = `${weatherLine(snap)} [${coords.source === 'log' ? 'log takeoff coords' : 'site coords'}]`;
-    const existing = flight.value.notes ?? '';
-    await updateRow('flights', flight.value.id, {
+    const existing = fresh.notes ?? '';
+    await updateRow('flights', f.id, {
       notes: existing ? `${existing}\n\n${line}` : line,
     }, 'save weather');
-    notice.value = `Weather added to notes (${coords.source === 'log' ? 'log takeoff coordinates' : 'site coordinates'}).`;
     await loadAll();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    // Best-effort enrichment: log, don't put a banner on the flight card.
+    console.warn('weather autofill failed', e);
   } finally {
     weatherBusy.value = false;
   }
 }
+
+watch(
+  [flight, weatherCoords, startIso, logsPending],
+  () => void autofillWeatherIntoNotes(),
+);
 
 // --- delete flight (P3) ------------------------------------------------------
 // Operators (canWrite) and admins; RLS "operators delete flights" enforces.
@@ -455,21 +462,6 @@ function durationTitle(s: FlightLogSummary): string {
       <div class="fc-meta">
         <span v-for="t in tagNames" :key="t"><AppBadge variant="primary">{{ t }}</AppBadge></span>
         <span class="fc-meta__spacer" />
-        <AppButton
-          v-if="canWrite"
-          size="sm"
-          variant="secondary"
-          :disabled="weatherBusy"
-          :title="
-            weatherCoords
-              ? `Open-Meteo at ${weatherCoords.source === 'log' ? 'coarse log takeoff' : 'site'} coordinates`
-              : 'Needs a parsed log with takeoff coordinates or a site with coordinates'
-          "
-          data-test="fetch-weather"
-          @click="fetchWeatherIntoNotes"
-        >
-          {{ weatherBusy ? 'Fetching weather…' : 'Fetch weather → notes' }}
-        </AppButton>
         <AppButton v-if="canWrite && !editing" size="sm" variant="secondary" @click="startEdit">
           Edit flight
         </AppButton>
