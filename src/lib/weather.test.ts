@@ -4,7 +4,7 @@
  * network request. The stubbed fetch fails the test if it is ever called.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchWeatherAt } from './weather';
+import { fetchWeatherAt, hasWeatherLine } from './weather';
 
 describe('fetchWeatherAt coordinate guard (P2 v2.2)', () => {
   const fetchSpy = vi.fn(() => {
@@ -52,5 +52,19 @@ describe('fetchWeatherAt coordinate guard (P2 v2.2)', () => {
       fetchWeatherAt(30.04, -103.49, new Date()),
     ).rejects.toThrow(/fetch must not be called/);
     expect(fetchSpy).toHaveBeenCalled();
+  });
+});
+
+describe('hasWeatherLine', () => {
+  it('detects quick-log and flight-card weather lines anywhere in notes', () => {
+    expect(hasWeatherLine('Weather (Open-Meteo, 2026-09-06T16:00Z): 26.1 °C')).toBe(true);
+    expect(
+      hasWeatherLine('Migrated.\n\nWeather (Open-Meteo, 2026-09-06T17:00Z): 23.8 °C [log takeoff coords]'),
+    ).toBe(true);
+  });
+  it('ignores notes without one', () => {
+    expect(hasWeatherLine(null)).toBe(false);
+    expect(hasWeatherLine('')).toBe(false);
+    expect(hasWeatherLine('Windy. Weather (Open-Meteo, mentioned mid-line)')).toBe(false);
   });
 });

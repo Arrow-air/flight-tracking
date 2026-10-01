@@ -119,6 +119,11 @@ export async function fetchWeatherAt(
   return null;
 }
 
+/** True when the notes already carry a weatherLine() (quick-log or flight card). */
+export function hasWeatherLine(notes: string | null | undefined): boolean {
+  return /^Weather \(Open-Meteo, /m.test(notes ?? '');
+}
+
 /** One-line human summary for the flight notes field. */
 export function weatherLine(w: WeatherSnapshot): string {
   const parts: string[] = [];
