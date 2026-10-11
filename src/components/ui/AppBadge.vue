@@ -5,9 +5,11 @@
  * status labels (upload/parse pipeline states).
  *
  * `status` maps flight-log pipeline states to variants for convenience:
- *   uploaded → info, parsing → warning, parsed → success, error → danger.
+ *   uploading → neutral, uploaded → info, parsing → warning,
+ *   parsed → success, error → danger.
  */
 import { computed } from 'vue';
+import type { FlightLogStatus } from '../../lib/db';
 
 type Variant = 'success' | 'danger' | 'warning' | 'info' | 'neutral' | 'primary';
 
@@ -15,7 +17,7 @@ const props = withDefaults(
   defineProps<{
     variant?: Variant;
     /** flight-log status shorthand; overrides variant */
-    status?: 'uploaded' | 'parsing' | 'parsed' | 'error';
+    status?: FlightLogStatus;
     /** square mono style instead of rounded pill */
     square?: boolean;
     /** leading status dot */
@@ -25,6 +27,7 @@ const props = withDefaults(
 );
 
 const statusMap: Record<string, Variant> = {
+  uploading: 'neutral',
   uploaded: 'info',
   parsing: 'warning',
   parsed: 'success',

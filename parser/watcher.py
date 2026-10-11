@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from arrow_parser import db  # noqa: E402
 from arrow_parser.pipeline import process_file  # noqa: E402
-from arrow_parser.storage import Storage  # noqa: E402
+from arrow_parser.storage import ObjectMissingError, Storage  # noqa: E402
 
 log = logging.getLogger("watcher")
 logging.basicConfig(
@@ -48,6 +48,16 @@ def sanitized_object_path(object_path: str) -> str:
     20260810210500_storage.sql; the path is recorded in
     flight_logs.sanitized_path)."""
     return object_path
+
+
+def error_message(e: Exception) -> str:
+    """Text stored in flight_logs.error. A missing raw object gets the same
+    "upload didn't finish" wording the frontend writes for a failed upload,
+    so the flight page offers Re-attach instead of a pointless Retry parse."""
+    if isinstance(e, ObjectMissingError):
+        return ("upload didn't finish: the raw .bin is not in storage "
+                f"({e}). Re-attach the same .bin to resume.")
+    return f"{type(e).__name__}: {e}"
 
 
 def cells_for_log(conn, rec: dict) -> int | None:
@@ -143,8 +153,7 @@ def main() -> int:
             log.error("log %s failed: %s\n%s", rec.get("id"), e,
                       traceback.format_exc())
             try:
-                db.mark_error(conn, rec["id"],
-                              f"{type(e).__name__}: {e}")
+                db.mark_error(conn, rec["id"], error_message(e))
             except Exception as e2:  # noqa: BLE001
                 log.error("could not mark error on %s: %s", rec.get("id"), e2)
                 conn = db.connect()

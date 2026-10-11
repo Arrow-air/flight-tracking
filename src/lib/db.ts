@@ -72,7 +72,11 @@ export interface Flight {
   incident_notes: string | null;
 }
 
-export type FlightLogStatus = 'uploaded' | 'parsing' | 'parsed' | 'error';
+/**
+ * 'uploading' (v2.4, migration 20261011120000): the row exists but its
+ * object may not yet. The parser only claims 'uploaded'.
+ */
+export type FlightLogStatus = 'uploading' | 'uploaded' | 'parsing' | 'parsed' | 'error';
 
 export interface FlightLog {
   id: string;
