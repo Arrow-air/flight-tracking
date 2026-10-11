@@ -4,7 +4,8 @@
  * (duration / distance / battery / modes timeline / events / errors /
  * health score) with GPS-privacy-aware downloads: raw .bin only for
  * admins + owners of a gps_private flight, sanitized copy for everyone.
- * Polls while any log is still uploaded/parsing.
+ * Polls while any log is still uploading/uploaded/parsing. A log whose upload
+ * never finished can be re-attached (same file, resumes) or deleted (v2.4).
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -15,7 +16,7 @@ import AppCard from '../components/ui/AppCard.vue';
 import AppInput from '../components/ui/AppInput.vue';
 import ConfirmDialog from '../components/ui/ConfirmDialog.vue';
 import AlertBanner from '../components/AlertBanner.vue';
-import { canViewRawGps, canWriteAircraft, userId } from '../lib/auth';
+import { canViewRawGps, canWriteAircraft, isAdmin, userId } from '../lib/auth';
 import {
   insertRow,
   selectRows,
@@ -41,12 +42,15 @@ import {
   rawLogUrl,
   sanitizedLogUrl,
   uploadFlightLog,
+  reattachFlightLog,
   requeueLog,
+  isStalledUpload,
+  isUnfinishedUpload,
   DuplicateLogError,
 } from '../lib/logs';
 import { flightStartIso, flightWeatherCoords, modeTimeline } from '../lib/flightMetrics';
 import { fetchWeatherAt, hasWeatherLine, weatherLine } from '../lib/weather';
-import { deleteFlight } from '../lib/deletion';
+import { deleteFlight, deleteLog } from '../lib/deletion';
 
 interface FlightFull extends Flight {
   aircraft?: { id: string; serial: string; name: string | null; aircraft_types?: { name: string } | null } | null;
@@ -84,6 +88,30 @@ function summaryOf(l: LogFull): FlightLogSummary | null {
     : l.flight_log_summary;
 }
 
+/** Still moving through the pipeline (a stalled upload is not). */
+function isPendingLog(l: FlightLog): boolean {
+  if (l.status === 'uploaded' || l.status === 'parsing') return true;
+  return l.status === 'uploading' && !isStalledUpload(l);
+}
+
+// Storage's raw-bucket INSERT policy: the uploader or an admin.
+function canReattach(l: FlightLog): boolean {
+  return l.uploaded_by === userId.value || isAdmin.value;
+}
+// RLS "delete own logs": the uploader or an admin.
+function canDeleteLog(l: FlightLog): boolean {
+  return l.uploaded_by === userId.value || isAdmin.value;
+}
+
+function logErrorMessage(l: FlightLog): string {
+  const e = l.error ?? '';
+  if (/^upload did ?n[o']t finish/i.test(e)) return e.charAt(0).toUpperCase() + e.slice(1);
+  if (isUnfinishedUpload(l)) {
+    return "The .bin never reached storage, so there's nothing to parse. Re-attach the same file to resume the upload.";
+  }
+  return `Parse failed: ${e || 'unknown error'}`;
+}
+
 // F3: display start prefers the parser's start_time_utc over the
 // hand-entered (now optional) started_at.
 const startIso = computed(() =>
@@ -99,7 +127,7 @@ async function loadLogs() {
       .order('uploaded_at'),
     'load logs',
   );
-  const pending = logs.value.some((l) => l.status === 'uploaded' || l.status === 'parsing');
+  const pending = logs.value.some(isPendingLog);
   if (pending && !pollTimer) {
     pollTimer = setInterval(() => void loadLogs().catch(() => undefined), 5000);
   } else if (!pending && pollTimer) {
@@ -234,9 +262,7 @@ const weatherCoords = computed(() =>
 // (The old "Fetch weather → notes" button appended a line per click.)
 const weatherBusy = ref(false);
 let weatherAttemptedFor: string | null = null;
-const logsPending = computed(() =>
-  logs.value.some((l) => l.status === 'uploaded' || l.status === 'parsing'),
-);
+const logsPending = computed(() => logs.value.some(isPendingLog));
 
 async function autofillWeatherIntoNotes() {
   const f = flight.value;
@@ -329,16 +355,33 @@ async function addNote() {
 
 // --- attach another log ----------------------------------------------------
 const attachBusy = ref(false);
+/** 0–100 while bytes are moving (attach or re-attach), else null. */
+const uploadPct = ref<number | null>(null);
+/** id of the log being re-attached, if any. */
+const reattachingId = ref<string | null>(null);
+
+function trackProgress(sent: number, total: number) {
+  uploadPct.value = total > 0 ? Math.floor((sent / total) * 100) : null;
+}
+
+// Closing the tab mid-upload is what strands a log without its bytes.
+function warnBeforeUnload(e: BeforeUnloadEvent) {
+  if (!attachBusy.value && !reattachingId.value) return;
+  e.preventDefault();
+  e.returnValue = '';
+}
+onMounted(() => window.addEventListener('beforeunload', warnBeforeUnload));
+onUnmounted(() => window.removeEventListener('beforeunload', warnBeforeUnload));
 
 async function onAttach(ev: Event) {
   const f = (ev.target as HTMLInputElement).files?.[0];
   if (!f || !flight.value) return;
   error.value = '';
   attachBusy.value = true;
+  uploadPct.value = null;
   try {
-    await uploadFlightLog(flight.value.id, f);
+    await uploadFlightLog(flight.value.id, f, undefined, trackProgress);
     notice.value = `${f.name} uploaded — queued for parsing.`;
-    await loadLogs();
   } catch (e) {
     error.value =
       e instanceof DuplicateLogError
@@ -348,7 +391,54 @@ async function onAttach(ev: Event) {
           : String(e);
   } finally {
     attachBusy.value = false;
+    uploadPct.value = null;
     (ev.target as HTMLInputElement).value = '';
+    // Reload either way: a failed upload leaves a row to re-attach or delete.
+    await loadLogs().catch(() => undefined);
+  }
+}
+
+async function onReattach(l: LogFull, ev: Event) {
+  const f = (ev.target as HTMLInputElement).files?.[0];
+  if (!f) return;
+  error.value = '';
+  reattachingId.value = l.id;
+  uploadPct.value = null;
+  try {
+    await reattachFlightLog(l, f, trackProgress);
+    notice.value = `${f.name} uploaded — queued for parsing.`;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    reattachingId.value = null;
+    uploadPct.value = null;
+    (ev.target as HTMLInputElement).value = '';
+    await loadLogs().catch(() => undefined);
+  }
+}
+
+// --- delete one log (v2.4) -------------------------------------------------
+const confirmingLogDelete = ref<LogFull | null>(null);
+const logDeleteBusy = ref(false);
+
+async function doDeleteLog() {
+  const l = confirmingLogDelete.value;
+  if (!l) return;
+  error.value = '';
+  logDeleteBusy.value = true;
+  try {
+    const res = await deleteLog(l);
+    notice.value =
+      `${pathBasename(l.object_path)} deleted.` +
+      (res.orphans.length
+        ? ` ${res.orphans.length} storage object(s) could not be confirmed removed (listed in the browser console).`
+        : '');
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    confirmingLogDelete.value = null;
+    logDeleteBusy.value = false;
+    await loadLogs().catch(() => undefined);
   }
 }
 
@@ -544,9 +634,23 @@ function durationTitle(s: FlightLogSummary): string {
       <h2>Flight logs</h2>
       <div v-if="canWrite" class="fc-attach">
         <label class="fc-attach__btn">
-          {{ attachBusy ? 'Uploading…' : '+ Attach .bin log' }}
-          <input type="file" accept=".bin,.BIN" :disabled="attachBusy" @change="onAttach" />
+          {{
+            attachBusy
+              ? uploadPct === null
+                ? 'Uploading…'
+                : `Uploading… ${uploadPct}%`
+              : '+ Attach .bin log'
+          }}
+          <input
+            type="file"
+            accept=".bin,.BIN"
+            :disabled="attachBusy || reattachingId !== null"
+            @change="onAttach"
+          />
         </label>
+        <span v-if="attachBusy" class="fc-muted fc-attach__hint">
+          Keep this tab open until the upload finishes.
+        </span>
       </div>
       <p v-if="logs.length === 0" class="fc-muted">No logs attached to this flight.</p>
 
@@ -565,7 +669,12 @@ function durationTitle(s: FlightLogSummary): string {
           >
             Params →
           </router-link>
-          <AppButton v-if="showRaw" size="sm" variant="secondary" @click="downloadRaw(l)">
+          <AppButton
+            v-if="showRaw && !isUnfinishedUpload(l)"
+            size="sm"
+            variant="secondary"
+            @click="downloadRaw(l)"
+          >
             Raw .bin
           </AppButton>
           <AppButton
@@ -576,17 +685,60 @@ function durationTitle(s: FlightLogSummary): string {
           >
             Sanitized .bin
           </AppButton>
+          <AppButton
+            v-if="canDeleteLog(l)"
+            size="sm"
+            variant="danger"
+            :disabled="reattachingId === l.id"
+            data-test="delete-log"
+            @click="confirmingLogDelete = l"
+          >
+            Delete log
+          </AppButton>
         </div>
 
         <template v-if="l.status === 'error'">
-          <AlertBanner kind="error" :message="`Parse failed: ${l.error ?? 'unknown error'}`" />
-          <AppButton v-if="canWrite" size="sm" variant="secondary" @click="retryParse(l)">
-            Retry parse
-          </AppButton>
+          <AlertBanner kind="error" :message="logErrorMessage(l)" />
         </template>
+        <p v-else-if="l.status === 'uploading'" class="fc-muted" data-test="log-uploading">
+          {{
+            reattachingId === l.id
+              ? `Uploading… ${uploadPct ?? 0}% — keep this tab open.`
+              : isStalledUpload(l)
+                ? "This upload never finished. Re-attach the same .bin to resume it, or delete the log."
+                : "Upload in progress. If it isn't still running in another tab, re-attach the same .bin to resume it."
+          }}
+        </p>
         <p v-else-if="l.status !== 'parsed'" class="fc-muted">
           {{ l.status === 'parsing' ? 'Parser is working on this log…' : 'Waiting for the parser…' }}
         </p>
+
+        <div
+          v-if="l.status === 'error' || l.status === 'uploading'"
+          class="fc-log__actions"
+        >
+          <AppButton
+            v-if="canWrite && l.status === 'error' && !isUnfinishedUpload(l)"
+            size="sm"
+            variant="secondary"
+            @click="retryParse(l)"
+          >
+            Retry parse
+          </AppButton>
+          <label
+            v-if="canReattach(l) && isUnfinishedUpload(l)"
+            class="fc-attach__btn"
+            data-test="reattach-log"
+          >
+            {{ reattachingId === l.id ? `Uploading… ${uploadPct ?? 0}%` : 'Re-attach .bin' }}
+            <input
+              type="file"
+              accept=".bin,.BIN"
+              :disabled="reattachingId !== null || attachBusy"
+              @change="onReattach(l, $event)"
+            />
+          </label>
+        </div>
 
         <template v-if="summaryOf(l)">
           <div class="fc-summary" data-test="log-summary">
@@ -711,6 +863,22 @@ function durationTitle(s: FlightLogSummary): string {
       </form>
 
       <ConfirmDialog
+        v-if="confirmingLogDelete"
+        title="Delete this log?"
+        confirm-label="Delete log"
+        :busy="logDeleteBusy"
+        @confirm="doDeleteLog"
+        @cancel="confirmingLogDelete = null"
+      >
+        <p>
+          <strong>{{ pathBasename(confirmingLogDelete.object_path) }}</strong>
+          will be permanently deleted from this flight, with its raw and sanitized
+          files and any parsed summary, series and parameters. The flight and its
+          notes stay.
+        </p>
+      </ConfirmDialog>
+
+      <ConfirmDialog
         v-if="confirmingDelete"
         title="Delete this flight?"
         confirm-label="Delete flight"
@@ -817,6 +985,18 @@ function durationTitle(s: FlightLogSummary): string {
 
 .fc-attach__btn input {
   display: none;
+}
+
+.fc-attach__hint {
+  margin-left: 0.75rem;
+}
+
+.fc-log__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
 }
 
 .fc-log {

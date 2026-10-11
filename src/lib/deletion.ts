@@ -114,6 +114,28 @@ export async function deleteFlight(flightId: string): Promise<FlightDeleteResult
   return { logCount: logs.length, orphans };
 }
 
+/**
+ * Delete one log (v2.4): storage objects first (same ordering trap as
+ * deleteFlight), then the flight_logs row — the FK cascade removes its
+ * summary, series and param snapshot. RLS "delete own logs" allows the
+ * uploader or an admin. A log whose upload never finished may have no raw
+ * object; that miss is expected and is not reported as an orphan.
+ */
+export async function deleteLog(
+  log: LogPaths & { id: string; status?: string },
+): Promise<{ orphans: string[] }> {
+  const paths = logObjectPaths([log]);
+  const rawOrphans = await removeObjects(RAW_BUCKET, paths.raw);
+  const unfinished = log.status === 'uploading' || log.status === 'error';
+  const orphans = [
+    ...(unfinished ? [] : rawOrphans),
+    ...(await removeObjects(SANITIZED_BUCKET, paths.sanitized)),
+  ];
+  if (orphans.length) console.warn('delete log: orphaned storage objects:', orphans);
+  await deleteRow('flight_logs', log.id, 'delete log');
+  return { orphans };
+}
+
 /** How many flights an aircraft has (drives the safe-default block). */
 export async function countAircraftFlights(aircraftId: string): Promise<number> {
   const { count, error } = await supabase

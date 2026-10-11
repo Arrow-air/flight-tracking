@@ -1,0 +1,24 @@
+-- Flight Tracking v2.4 — 'uploading' log state
+--
+-- The upload contract (20260810210500_storage.sql) creates the flight_logs
+-- row BEFORE the object exists, because the raw-bucket INSERT policy resolves
+-- through that row. The row used to start at the column default 'uploaded',
+-- which pg_notify()s the parser immediately: on any upload that takes more
+-- than a few seconds the parser downloads a missing object, gets storage's
+-- "Object not found" (HTTP 400), and marks the log 'error'. A 100 MB log on
+-- a slow connection always lost that race, and if the upload then died the
+-- row stayed in 'error' with nothing to parse.
+--
+-- New flow (src/lib/logs.ts): insert the row as 'uploading', upload the
+-- object, then flip the row to 'uploaded'. tg_notify_flight_log_uploaded
+-- fires on that transition (old.status is distinct from new.status), and the
+-- parser only claims status='uploaded', so it never sees a row without bytes.
+--
+-- The column default stays 'uploaded' so older clients and the import
+-- scripts (which upload the object first) keep working unchanged.
+--
+-- APPLY THIS BEFORE DEPLOYING THE v2.4 FRONTEND. The frontend also falls back
+-- to the old insert if the enum value is missing, but the fallback brings the
+-- old race back with it.
+
+alter type public.flight_log_status add value if not exists 'uploading' before 'uploaded';

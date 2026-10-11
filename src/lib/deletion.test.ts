@@ -63,6 +63,7 @@ import {
   countAircraftFlights,
   deleteAircraft,
   deleteFlight,
+  deleteLog,
   logObjectPaths,
   orphanedPaths,
 } from './deletion';
@@ -179,6 +180,57 @@ describe('deleteFlight', () => {
       { data: [], error: null }, // delete affected 0 rows
     ];
     await expect(deleteFlight('f1')).rejects.toThrow(/0 rows deleted/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deleteLog (v2.4) — same ordering trap as deleteFlight, one log
+// ---------------------------------------------------------------------------
+describe('deleteLog', () => {
+  const parsed = {
+    id: 'log-1',
+    object_path: 'f1/aaa_x.BIN',
+    sanitized_path: 'f1/aaa_x.BIN',
+    status: 'parsed',
+  };
+
+  it('removes both objects BEFORE deleting the log row', async () => {
+    state.results = [{ data: [{ id: 'log-1' }], error: null }];
+    const res = await deleteLog(parsed);
+    expect(res).toEqual({ orphans: [] });
+    expect(state.seq).toEqual([
+      'remove:flight-logs',
+      'remove:flight-logs-sanitized',
+      'from:flight_logs',
+    ]);
+  });
+
+  it('does not call a missing raw object an orphan when the upload never finished', async () => {
+    state.results = [{ data: [{ id: 'log-1' }], error: null }];
+    state.storageResults = [{ data: [], error: null }]; // raw: nothing there
+    const res = await deleteLog({
+      id: 'log-1',
+      object_path: 'f1/aaa_x.BIN',
+      sanitized_path: null,
+      status: 'uploading',
+    });
+    expect(res.orphans).toEqual([]);
+    expect(state.seq).toEqual(['remove:flight-logs', 'from:flight_logs']);
+  });
+
+  it('reports a refused raw delete on a parsed log', async () => {
+    state.results = [{ data: [{ id: 'log-1' }], error: null }];
+    state.storageResults = [
+      { data: [], error: null }, // raw refused
+      { data: [{ name: 'f1/aaa_x.BIN' }], error: null },
+    ];
+    const res = await deleteLog(parsed);
+    expect(res.orphans).toEqual(['f1/aaa_x.BIN']);
+  });
+
+  it('surfaces an RLS-blocked row delete', async () => {
+    state.results = [{ data: [], error: null }];
+    await expect(deleteLog(parsed)).rejects.toThrow(/0 rows deleted/);
   });
 });
 

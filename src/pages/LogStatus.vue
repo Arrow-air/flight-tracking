@@ -16,6 +16,7 @@ import AlertBanner from '../components/AlertBanner.vue';
 import { selectRows, type FlightLog } from '../lib/db';
 import { supabase } from '../lib/supabase';
 import { fmtBytes, fmtDateTime, pathBasename } from '../lib/format';
+import { isStalledUpload } from '../lib/logs';
 
 interface LogRow extends FlightLog {
   flights?: { id: string; title: string | null; aircraft_id: string } | null;
@@ -93,13 +94,17 @@ const rows = computed(() =>
             : 'summary ready'
           : l.status === 'parsing'
             ? 'parser working…'
-            : 'waiting for parser',
+            : l.status === 'uploading'
+              ? isStalledUpload(l)
+                ? 'upload never finished — re-attach the .bin on its flight'
+                : 'upload in progress'
+              : 'waiting for parser',
     flightId: l.flight_id,
   })),
 );
 
 const counts = computed(() => {
-  const c = { uploaded: 0, parsing: 0, parsed: 0, error: 0 };
+  const c = { uploading: 0, uploaded: 0, parsing: 0, parsed: 0, error: 0 };
   for (const l of logs.value) c[l.status] += 1;
   return c;
 });
@@ -118,6 +123,7 @@ const counts = computed(() => {
     <AlertBanner v-if="error" kind="error" :message="error" />
 
     <div class="log-counts">
+      <AppBadge status="uploading" square dot>uploading {{ counts.uploading }}</AppBadge>
       <AppBadge status="uploaded" square dot>uploaded {{ counts.uploaded }}</AppBadge>
       <AppBadge status="parsing" square dot>parsing {{ counts.parsing }}</AppBadge>
       <AppBadge status="parsed" square dot>parsed {{ counts.parsed }}</AppBadge>
