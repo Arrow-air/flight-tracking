@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractOAuthError } from './oauthCallback';
+import { extractOAuthError, isRecoveryLanding } from './oauthCallback';
 
 const clean = { hash: '', search: '' };
 
@@ -49,5 +49,19 @@ describe('extractOAuthError (A1 GitHub OAuth callback)', () => {
         search: '?error=invalid_request&error_description=bad+redirect',
       }),
     ).toBe('bad redirect');
+  });
+});
+
+describe('isRecoveryLanding (password-reset email link)', () => {
+  it('true when GoTrue marks the tokens type=recovery', () => {
+    expect(
+      isRecoveryLanding({ hash: '#access_token=abc&expires_in=3600&refresh_token=def&token_type=bearer&type=recovery' }),
+    ).toBe(true);
+  });
+
+  it('false for sign-up confirmations, OAuth tokens and plain loads', () => {
+    expect(isRecoveryLanding({ hash: '#access_token=abc&type=signup' })).toBe(false);
+    expect(isRecoveryLanding({ hash: '#access_token=abc&refresh_token=def' })).toBe(false);
+    expect(isRecoveryLanding({ hash: '' })).toBe(false);
   });
 });

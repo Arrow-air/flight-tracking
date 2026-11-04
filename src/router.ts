@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 // Design-system styles are loaded here so every route gets them.
 import './styles/index.css';
 import { auth, initAuth, isAdmin } from './lib/auth';
+import { recoveryPending } from './lib/oauthCallback';
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -41,7 +42,8 @@ router.beforeEach(async (to) => {
   if (!to.meta.public && !auth.session) {
     return { path: '/login', query: { redirect: to.fullPath } };
   }
-  if (to.path === '/login' && auth.session) {
+  // A reset link signs people in; they stay on /login to choose a password.
+  if (to.path === '/login' && auth.session && !recoveryPending()) {
     return { path: '/' };
   }
   // Client-side gate for admin routes (RLS is the server-side gate; this only
