@@ -10,23 +10,30 @@ import AppButton from '../components/ui/AppButton.vue';
 import AppInput from '../components/ui/AppInput.vue';
 import AlertBanner from '../components/AlertBanner.vue';
 import {
+  auth,
   githubEnabled,
   sendPasswordReset,
+  setNewPassword,
   signInWithEmail,
   signInWithGitHub,
   signUpWithEmail,
 } from '../lib/auth';
-import { consumeOAuthCallbackError } from '../lib/oauthCallback';
+import {
+  consumeOAuthCallbackError,
+  finishRecovery,
+  recoveryPending,
+} from '../lib/oauthCallback';
 // A3: real brand lockup (arrowair.com/img/brand/SVGs/) — darkblue variant
 // (#0943bf on transparent) for the white login panel.
 import lockupDarkblue from '../assets/brand/arrow-lockup-darkblue.svg';
 
-type Mode = 'signin' | 'signup' | 'reset';
+type Mode = 'signin' | 'signup' | 'reset' | 'newpassword';
 
 const route = useRoute();
 const router = useRouter();
 
-const mode = ref<Mode>('signin');
+// A password-reset link lands here signed in: ask for the new password.
+const mode = ref<Mode>(recoveryPending() && auth.session ? 'newpassword' : 'signin');
 const email = ref('');
 const password = ref('');
 const name = ref('');
@@ -34,10 +41,11 @@ const busy = ref(false);
 const error = ref('');
 const notice = ref('');
 
-// A1: a denied/failed GitHub OAuth attempt bounces back here via the router
-// guard — surface the error GoTrue put in the callback URL (one-shot).
+// A1: a denied/failed GitHub OAuth attempt, or an expired email link, bounces
+// back here via the router guard — surface the error GoTrue put in the
+// callback URL (one-shot).
 const oauthError = consumeOAuthCallbackError();
-if (oauthError) error.value = `GitHub sign-in failed: ${oauthError}`;
+if (oauthError) error.value = `Sign-in failed: ${oauthError}`;
 
 function switchMode(m: Mode) {
   mode.value = m;
@@ -54,6 +62,10 @@ async function submit() {
       await signInWithEmail(email.value.trim(), password.value);
       const dest = typeof route.query.redirect === 'string' ? route.query.redirect : '/';
       router.push(dest);
+    } else if (mode.value === 'newpassword') {
+      await setNewPassword(password.value);
+      finishRecovery();
+      router.push('/');
     } else if (mode.value === 'signup') {
       const { needsConfirmation } = await signUpWithEmail(
         email.value.trim(),
@@ -98,7 +110,7 @@ async function github() {
       </div>
 
       <h1 class="login__title">
-        {{ mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Reset password' }}
+        {{ mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : mode === 'newpassword' ? 'Choose a new password' : 'Reset password' }}
       </h1>
 
       <AlertBanner v-if="error" kind="error" :message="error" data-test="auth-error" />
@@ -113,6 +125,7 @@ async function github() {
           required
         />
         <AppInput
+          v-if="mode !== 'newpassword'"
           v-model="email"
           label="Email"
           type="email"
@@ -123,18 +136,18 @@ async function github() {
         <AppInput
           v-if="mode !== 'reset'"
           v-model="password"
-          label="Password"
+          :label="mode === 'newpassword' ? 'New password' : 'Password'"
           type="password"
           placeholder="••••••••••"
           required
           data-test="password"
         />
         <AppButton type="submit" block :disabled="busy" data-test="submit">
-          {{ busy ? 'Working…' : mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Sign up' : 'Send reset email' }}
+          {{ busy ? 'Working…' : mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Sign up' : mode === 'newpassword' ? 'Save password' : 'Send reset email' }}
         </AppButton>
       </form>
 
-      <template v-if="githubEnabled && mode !== 'reset'">
+      <template v-if="githubEnabled && mode !== 'reset' && mode !== 'newpassword'">
         <div class="login__or"><span>or</span></div>
         <AppButton variant="secondary" block data-test="github" @click="github">
           <template #icon>
@@ -149,7 +162,7 @@ async function github() {
         </AppButton>
       </template>
 
-      <div class="login__links">
+      <div v-if="mode !== 'newpassword'" class="login__links">
         <template v-if="mode === 'signin'">
           <a href="#" @click.prevent="switchMode('signup')">Create account</a>
           <a href="#" @click.prevent="switchMode('reset')">Forgot password?</a>

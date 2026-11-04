@@ -34,16 +34,35 @@ export function extractOAuthError(loc: {
   return null;
 }
 
+/**
+ * Pure parser: true when the URL is the landing of a password-reset email
+ * link. GoTrue puts `type=recovery` beside the tokens in the hash.
+ */
+export function isRecoveryLanding(loc: { hash: string }): boolean {
+  return new URLSearchParams(loc.hash.replace(/^#/, '')).get('type') === 'recovery';
+}
+
 let stashed: string | null = null;
+let recovery = false;
 
 // Module-eval side effect: runs once at app bootstrap, before supabase-js's
 // async URL detection or any router navigation can rewrite the URL.
 if (typeof window !== 'undefined') {
   stashed = extractOAuthError(window.location);
+  recovery = isRecoveryLanding(window.location);
   if (stashed !== null) {
     // Strip the error params so a reload doesn't re-show a stale error.
     window.history.replaceState(null, '', window.location.pathname);
   }
+}
+
+/** A reset link signed this visitor in: they still have to choose a password. */
+export function recoveryPending(): boolean {
+  return recovery;
+}
+
+export function finishRecovery(): void {
+  recovery = false;
 }
 
 /** One-shot read of the error captured at page load (cleared after read). */

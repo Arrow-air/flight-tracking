@@ -128,7 +128,9 @@ export async function signUpWithEmail(
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: { data: { name } },
+    // The confirmation link brings people back here, not to the shared
+    // sign-in's default page (the superapp).
+    options: { data: { name }, emailRedirectTo: window.location.origin },
   });
   if (error) throw new Error(error.message);
   return { needsConfirmation: !data.session };
@@ -146,6 +148,12 @@ export async function sendPasswordReset(email: string): Promise<void> {
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
     redirectTo: `${window.location.origin}/login`,
   });
+  if (error) throw new Error(error.message);
+}
+
+/** After a reset link signed them in: the password they'll use from now on. */
+export async function setNewPassword(password: string): Promise<void> {
+  const { error } = await supabase.auth.updateUser({ password });
   if (error) throw new Error(error.message);
 }
 
