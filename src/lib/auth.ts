@@ -14,7 +14,7 @@ import type { Profile } from './db';
 // error from the URL at bootstrap, before router/supabase-js rewrite it.
 // Login.vue reads it via consumeOAuthCallbackError().
 import './oauthCallback';
-import { supabase } from './supabase';
+import { onSharedSignInChange, supabase } from './supabase';
 
 export const githubEnabled =
   (import.meta.env.VITE_GITHUB_AUTH_ENABLED ?? '').toLowerCase() === 'true';
@@ -101,6 +101,14 @@ export function initAuth(): Promise<void> {
         } else if (changed || !auth.profile) {
           void loadProfile();
         }
+      });
+      // Signed in or out on app.arrowair.com: start over as whoever that is now.
+      onSharedSignInChange(() => {
+        void supabase.auth.getSession().then(({ data }) => {
+          if ((data.session?.user.id ?? null) !== (auth.session?.user.id ?? null)) {
+            window.location.reload();
+          }
+        });
       });
     })();
   }

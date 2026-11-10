@@ -65,6 +65,23 @@ fall back to its configured site URL.
   name (`full_name`, then `user_name`, then the email local-part). No extra migration
   is needed for OAuth users.
 
+### Sign in once across Arrow apps
+
+- The session lives in app.arrowair.com's storage, not this app's: `src/lib/supabase.ts`
+  gives supabase-js the storage from `src/lib/sessionBridge.ts`, which reaches
+  `https://app.arrowair.com/session-bridge.html` in a hidden frame. That page answers
+  only https://flights.arrowair.com, so signing in or out here or on the superapp does
+  both, and nothing is shared with the rest of arrowair.com (the forum and the website
+  are hosted elsewhere).
+- A session this app kept itself before moves to the bridge the first time, unless the
+  superapp already has one. If the bridge doesn't answer within 4 s, this app keeps its
+  own sign-in, as before.
+- Signing in or out in a superapp tab reloads an open flights tab when the account
+  changes (`initAuth` in `src/lib/auth.ts`).
+- `VITE_SESSION_HUB` picks another bridge origin (local tests); empty turns it off.
+  Unset, the bridge is used only on flights.arrowair.com, so local dev keeps its own
+  sign-in.
+
 ### Manual test plan (requires the provider secret; cannot be run locally)
 
 1. Set the four `GOTRUE_EXTERNAL_GITHUB_*` vars on the GoTrue container and restart it.
