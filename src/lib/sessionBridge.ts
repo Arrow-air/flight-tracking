@@ -5,8 +5,12 @@
  * signing in or out here or there does both. Nothing is shared with the rest
  * of arrowair.com: the forum and the website are hosted elsewhere.
  *
- * If the bridge doesn't answer (app.arrowair.com down, storage blocked), this
- * app keeps its own sign-in, as before.
+ * This app keeps its own sign-in, as before the bridge, when the frame can't
+ * see app.arrowair.com's storage (Safari and every iPhone browser give a frame
+ * under another address storage of its own; a browser that never opened
+ * app.arrowair.com has nothing to share yet), and while app.arrowair.com holds
+ * another account. It keeps a copy of the shared sign-in too, used while the
+ * bridge doesn't answer (app.arrowair.com down or slow).
  */
 
 /** The stored sign-in, wherever it lives. */
@@ -22,51 +26,106 @@ interface LocalStore {
   removeItem(key: string): void;
 }
 
+/** The account a stored session belongs to, if it is one. */
+export function accountOf(value: string | null): string | null {
+  if (value === null) return null;
+  try {
+    const s = JSON.parse(value);
+    if (typeof s?.user?.id === 'string') return s.user.id;
+    const claims = JSON.parse(atob(s.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return typeof claims.sub === 'string' ? claims.sub : null;
+  } catch {
+    return null;
+  }
+}
+
+function expiresAt(value: string): number {
+  try {
+    const n = JSON.parse(value)?.expires_at;
+    return typeof n === 'number' ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Storage for supabase-js: the hub when it answers, this app's own storage
- * when it doesn't. A sign-in this app kept itself before the bridge moves to
- * the hub, unless the hub already has one (then the hub's wins).
+ * when it doesn't. Beside each key this app keeps a copy, marked when it
+ * mirrors the hub. An unmarked copy is this app's own sign-in (from before the
+ * bridge, or written while the hub didn't answer): on first contact it goes to
+ * the hub if the hub has none or an older one of the same account. If the hub
+ * holds another account, this app keeps its own until it signs out.
  */
 export function bridgeStorage(hub: () => Promise<Hub | null>, local: LocalStore) {
-  const adopted = new Set<string>();
+  const mark = (key: string) => `${key}-shared`;
+  const settled = new Set<string>();
+  const apart = new Set<string>();
+
+  function keep(key: string, value: string | null, shared: boolean) {
+    if (value === null) local.removeItem(key);
+    else local.setItem(key, value);
+    if (shared && value !== null) local.setItem(mark(key), '1');
+    else local.removeItem(mark(key));
+  }
+
   async function reach(key: string): Promise<Hub | null> {
+    if (apart.has(key)) return null;
     const h = await hub().catch(() => null);
-    if (!h || adopted.has(key)) return h;
-    adopted.add(key);
+    if (!h || settled.has(key)) return h;
     const mine = local.getItem(key);
-    if (mine !== null) {
-      if ((await h.get(key)) === null) await h.set(key, mine);
-      local.removeItem(key);
+    if (mine !== null && local.getItem(mark(key)) === null) {
+      const theirs = await h.get(key);
+      if (theirs !== null && accountOf(theirs) !== accountOf(mine)) {
+        apart.add(key);
+        return null;
+      }
+      if (theirs === null || expiresAt(mine) > expiresAt(theirs)) await h.set(key, mine);
+      local.setItem(mark(key), '1');
     }
+    // Only once it went through: a hub that failed halfway tries again next time.
+    settled.add(key);
     return h;
   }
+
   return {
     async getItem(key: string): Promise<string | null> {
       try {
         const h = await reach(key);
-        if (h) return await h.get(key);
+        if (h) {
+          const v = await h.get(key);
+          keep(key, v, true);
+          return v;
+        }
       } catch {
-        /* the hub stopped answering: this app's own storage */
+        /* the hub stopped answering: the copy here */
       }
       return local.getItem(key);
     },
     async setItem(key: string, value: string): Promise<void> {
       try {
         const h = await reach(key);
-        if (h) return await h.set(key, value);
+        if (h) {
+          await h.set(key, value);
+          keep(key, value, true);
+          return;
+        }
       } catch {
         /* as above */
       }
-      local.setItem(key, value);
+      keep(key, value, false);
     },
     async removeItem(key: string): Promise<void> {
-      local.removeItem(key);
       try {
         const h = await reach(key);
-        if (h) await h.remove(key);
+        if (h) {
+          await h.remove(key);
+          keep(key, null, true);
+          return;
+        }
       } catch {
         /* as above */
       }
+      keep(key, null, false);
     },
   };
 }
@@ -75,6 +134,7 @@ interface Reply {
   arrowSession: 1;
   id?: string;
   ok?: boolean;
+  shared?: boolean;
   value?: string | null;
   error?: string;
   changed?: string;
@@ -82,65 +142,93 @@ interface Reply {
 
 /**
  * The hub as a hidden frame of `origin`/session-bridge.html, opened on first
- * use. `onChange` runs when the sign-in changes in another app's tab.
+ * use. A frame that doesn't answer within `timeoutMs` is dropped and tried
+ * again after `retryMs`; one that answers but can't see app.arrowair.com's
+ * storage isn't used again on this page. `onChange` runs when the sign-in
+ * changes in another app's tab.
  */
-export function frameHub(origin: string, timeoutMs = 4000) {
-  let opened: Promise<Hub | null> | null = null;
+export function frameHub(origin: string, timeoutMs = 4000, retryMs = 30000) {
   const listeners = new Set<() => void>();
+  const waiting = new Map<string, (m: Reply) => void>();
+  let seq = 0;
+  let frame: HTMLIFrameElement | null = null;
+  let current: Promise<Hub | null> | null = null;
+  let failedAt = -Infinity;
+  let unshared = false;
+
+  window.addEventListener('message', (e: MessageEvent) => {
+    if (!frame || e.origin !== origin || e.source !== frame.contentWindow) return;
+    const m = e.data as Reply;
+    if (!m || m.arrowSession !== 1) return;
+    if (m.changed) {
+      listeners.forEach((fn) => fn());
+      return;
+    }
+    const done = m.id ? waiting.get(m.id) : undefined;
+    if (done) {
+      waiting.delete(m.id!);
+      done(m);
+    }
+  });
+
+  function drop(f: HTMLIFrameElement) {
+    f.remove();
+    if (frame !== f) return;
+    frame = null;
+    current = null;
+    failedAt = Date.now();
+  }
+
+  function call(op: string, key?: string, value?: string): Promise<Reply> {
+    const f = frame;
+    return new Promise<Reply>((ok, fail) => {
+      if (!f) return fail(new Error('The sign-in bridge is closed.'));
+      const id = String(++seq);
+      const timer = setTimeout(() => {
+        waiting.delete(id);
+        drop(f);
+        fail(new Error('The sign-in bridge did not answer.'));
+      }, timeoutMs);
+      waiting.set(id, (m) => {
+        clearTimeout(timer);
+        if (m.error) fail(new Error(m.error));
+        else ok(m);
+      });
+      f.contentWindow?.postMessage({ arrowSession: 1, id, op, key, value }, origin);
+    });
+  }
+
+  const hub: Hub = {
+    get: async (key) => {
+      const v = (await call('get', key)).value;
+      return typeof v === 'string' ? v : null;
+    },
+    set: async (key, value) => {
+      await call('set', key, value);
+    },
+    remove: async (key) => {
+      await call('remove', key);
+    },
+  };
 
   function open(): Promise<Hub | null> {
     return new Promise((resolve) => {
-      const frame = document.createElement('iframe');
-      const waiting = new Map<string, (m: Reply) => void>();
-      let seq = 0;
-      window.addEventListener('message', (e: MessageEvent) => {
-        if (e.origin !== origin || e.source !== frame.contentWindow) return;
-        const m = e.data as Reply;
-        if (!m || m.arrowSession !== 1) return;
-        if (m.changed) {
-          listeners.forEach((fn) => fn());
-          return;
-        }
-        const done = m.id ? waiting.get(m.id) : undefined;
-        if (done) {
-          waiting.delete(m.id!);
-          done(m);
-        }
-      });
-      const call = (op: string, key?: string, value?: string) =>
-        new Promise<Reply>((ok, fail) => {
-          const id = String(++seq);
-          const timer = setTimeout(() => {
-            waiting.delete(id);
-            fail(new Error('The sign-in bridge did not answer.'));
-          }, timeoutMs);
-          waiting.set(id, (m) => {
-            clearTimeout(timer);
-            if (m.error) fail(new Error(m.error));
-            else ok(m);
-          });
-          frame.contentWindow?.postMessage({ arrowSession: 1, id, op, key, value }, origin);
-        });
-      const hub: Hub = {
-        get: async (key) => {
-          const v = (await call('get', key)).value;
-          return typeof v === 'string' ? v : null;
-        },
-        set: async (key, value) => {
-          await call('set', key, value);
-        },
-        remove: async (key) => {
-          await call('remove', key);
-        },
-      };
-      const giveUp = setTimeout(() => resolve(null), timeoutMs);
-      frame.addEventListener(
+      const f = document.createElement('iframe');
+      frame = f;
+      const giveUp = setTimeout(() => {
+        drop(f);
+        resolve(null);
+      }, timeoutMs);
+      f.addEventListener(
         'load',
         () => {
           call('hello').then(
-            () => {
+            (m) => {
               clearTimeout(giveUp);
-              resolve(hub);
+              if (m.shared === true) return resolve(hub);
+              unshared = true;
+              drop(f);
+              resolve(null);
             },
             () => {
               clearTimeout(giveUp);
@@ -150,17 +238,24 @@ export function frameHub(origin: string, timeoutMs = 4000) {
         },
         { once: true },
       );
-      frame.title = 'Arrow sign-in';
-      frame.hidden = true;
-      frame.tabIndex = -1;
-      frame.setAttribute('aria-hidden', 'true');
-      frame.src = `${origin}/session-bridge.html`;
-      (document.body ?? document.documentElement).appendChild(frame);
+      f.title = 'Arrow sign-in';
+      f.hidden = true;
+      f.tabIndex = -1;
+      f.setAttribute('aria-hidden', 'true');
+      f.src = `${origin}/session-bridge.html`;
+      (document.body ?? document.documentElement).appendChild(f);
     });
   }
 
   return {
-    hub: () => (opened ??= open()),
+    hub(): Promise<Hub | null> {
+      if (unshared) return Promise.resolve(null);
+      if (current) return current;
+      if (Date.now() - failedAt < retryMs) return Promise.resolve(null);
+      const p = open();
+      current = p;
+      return p;
+    },
     onChange: (fn: () => void) => {
       listeners.add(fn);
     },

@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { markRecovery } from './oauthCallback';
 import { bridgeStorage, frameHub, hubOrigin } from './sessionBridge';
 
 const url = import.meta.env.VITE_SUPABASE_URL;
@@ -26,10 +27,18 @@ export function onSharedSignInChange(fn: () => void): void {
   bridge?.onChange(fn);
 }
 
-export const supabase = createClient(
-  url,
-  key,
-  bridge
-    ? { auth: { storage: bridgeStorage(bridge.hub, window.localStorage) } }
-    : undefined,
-);
+// PKCE: a link back from GitHub or an email only signs in the browser that
+// asked for it, so nobody can send a link that signs someone into another
+// account (which the superapp and the forum would then share).
+export const supabase = createClient(url, key, {
+  auth: {
+    flowType: 'pkce',
+    ...(bridge ? { storage: bridgeStorage(bridge.hub, window.localStorage) } : {}),
+  },
+});
+
+// A reset link signed them in: Login asks for a new password. supabase-js
+// reports it while reading the link, before anything else listens.
+supabase.auth.onAuthStateChange((event) => {
+  if (event === 'PASSWORD_RECOVERY') markRecovery();
+});
