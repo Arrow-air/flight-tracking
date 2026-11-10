@@ -61,6 +61,12 @@ export function recoveryPending(): boolean {
   return recovery;
 }
 
+/** supabase-js read a reset link (its PASSWORD_RECOVERY event): with PKCE the
+ * address carries only a code, so this is how a reset landing shows. */
+export function markRecovery(): void {
+  recovery = true;
+}
+
 export function finishRecovery(): void {
   recovery = false;
 }
