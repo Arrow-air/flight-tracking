@@ -16,6 +16,12 @@
  * never got its bytes stays 'uploading' (or 'error' with the upload failure),
  * and re-attaching the same file resumes into it.
  *
+ * v2.4.1: a resumable upload only ever talks to its own endpoint. A server that
+ * answers with an upload URL anywhere else (a self-hosted Supabase behind a
+ * proxy can hand out http://<host>:8000/upload/resumable/<id>, which no browser
+ * on an https page can reach) gets the single-request upload instead, and a
+ * resume URL saved from such a server is dropped rather than retried.
+ *
  * Failures surface loudly; a failed PUT marks the row status='error'.
  */
 import * as tus from 'tus-js-client';
@@ -168,15 +174,36 @@ async function accessToken(): Promise<string | null> {
   return data.session?.access_token ?? null;
 }
 
+/** Supabase's tus endpoint for this project. */
+export function tusEndpoint(): string {
+  return `${supabaseUrl}/storage/v1/upload/resumable`;
+}
+
+/**
+ * True when `url` is an upload URL under `endpoint` (same origin, path below
+ * it), i.e. one this page can actually send chunks to (pure; unit-tested).
+ */
+export function isUsableUploadUrl(url: string | null | undefined, endpoint: string): boolean {
+  if (!url) return false;
+  try {
+    const u = new URL(url, endpoint);
+    const e = new URL(endpoint);
+    return u.origin === e.origin && u.pathname.startsWith(`${e.pathname.replace(/\/+$/, '')}/`);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resumable upload via Supabase's tus endpoint. The upload URL is kept in
  * localStorage under a fingerprint of (object path, file), so re-attaching
  * the same file to the same log continues from the last acknowledged chunk.
  */
 function tusUpload(objectPath: string, file: File, onProgress?: ProgressFn): Promise<void> {
+  const endpoint = tusEndpoint();
   return new Promise((resolve, reject) => {
     const upload = new tus.Upload(file, {
-      endpoint: `${supabaseUrl}/storage/v1/upload/resumable`,
+      endpoint,
       chunkSize: TUS_CHUNK_BYTES,
       retryDelays: [0, 3000, 5000, 10000, 20000, 30000, 60000, 60000],
       uploadDataDuringCreation: true,
@@ -195,7 +222,20 @@ function tusUpload(objectPath: string, file: File, onProgress?: ProgressFn): Pro
         const token = await accessToken();
         if (token) req.setHeader('authorization', `Bearer ${token}`);
       },
+      // Check where the server wants the rest of the file BEFORE tus saves or
+      // uses that address. Throwing here fails the create (no retry, see
+      // onShouldRetry) and putObject falls back to a single request.
+      onAfterResponse: (req, res) => {
+        if (req.getMethod() !== 'POST') return;
+        const location = res.getHeader('Location');
+        if (location && !isUsableUploadUrl(location, endpoint)) {
+          throw new ResumableUnavailableError(
+            `the server's upload URL is unreachable from here (${location})`,
+          );
+        }
+      },
       onShouldRetry: (err) => {
+        if (err.causingError instanceof ResumableUnavailableError) return false;
         const status = err.originalResponse?.getStatus() ?? 0;
         const body = err.originalResponse?.getBody() ?? '';
         if (ALREADY_EXISTS.test(body)) return false;
@@ -208,8 +248,20 @@ function tusUpload(objectPath: string, file: File, onProgress?: ProgressFn): Pro
       onSuccess: () => resolve(),
     });
     upload.findPreviousUploads().then(
-      (previous) => {
-        if (previous.length) upload.resumeFromPreviousUpload(previous[0]);
+      async (previous) => {
+        // Only resume uploads this page can reach. Anything else (saved from a
+        // misconfigured server) would just fail its HEAD until the retries run
+        // out, on every re-attach: forget it and start a fresh upload.
+        const stale = previous.filter((p) => !isUsableUploadUrl(p.uploadUrl, endpoint));
+        for (const p of stale) {
+          try {
+            await upload.options.urlStorage?.removeUpload(p.urlStorageKey);
+          } catch {
+            // best effort (localStorage can throw); it's skipped below either way
+          }
+        }
+        const usable = previous.filter((p) => !stale.includes(p));
+        if (usable.length) upload.resumeFromPreviousUpload(usable[0]);
         upload.start();
       },
       () => upload.start(),
@@ -218,6 +270,8 @@ function tusUpload(objectPath: string, file: File, onProgress?: ProgressFn): Pro
 }
 
 function classifyTusError(err: Error): Error {
+  const cause = (err as tus.DetailedError).causingError;
+  if (cause instanceof ResumableUnavailableError) return cause;
   const res = (err as tus.DetailedError).originalResponse ?? null;
   const status = res?.getStatus() ?? 0;
   const body = res?.getBody() ?? '';
