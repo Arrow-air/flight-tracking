@@ -118,6 +118,24 @@ fall back to its configured site URL.
 Schema migrations live in `supabase/migrations/` and are applied to the self-hosted
 Supabase. Studio is available at https://supabase.arrowair.com (credentials with the team).
 
+## Storage
+
+Logs over 6 MB go up resumably (tus) through
+`https://supabase.arrowair.com/storage/v1/upload/resumable`. Storage builds each upload's
+URL from the request it sees, and behind the Openship edge and Kong that request says
+`http` and Kong's port 8000, so the storage service needs (set on the storage container,
+NOT read by Vite):
+
+| Variable | Value |
+| --- | --- |
+| `STORAGE_PUBLIC_URL` | `https://supabase.arrowair.com` |
+| `REQUEST_ALLOW_X_FORWARDED_PATH` | `true` (keeps Kong's `/storage/v1` prefix) |
+
+Without them, upload URLs come back as `http://supabase.arrowair.com:8000/upload/resumable/…`,
+which no browser can reach from an https page. The app then uses single-request uploads
+(storage's `FILE_SIZE_LIMIT`, no resume). To check: start an upload of a log over 6 MB and
+look at the `Location` header of the `POST …/upload/resumable` response.
+
 ## Deployment
 
 Openship project `flight-tracking` (Arrow org) builds `main` on push and serves it at

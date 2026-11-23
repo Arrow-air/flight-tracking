@@ -29,7 +29,13 @@ const tusState: {
   instances: FakeUpload[];
   outcome: { status: number; body: string } | 'success';
   previous: unknown[];
-} = { instances: [], outcome: 'success', previous: [] };
+  /** Location header the server answers a new upload with. */
+  location: string | null;
+  /** urlStorage keys the code asked tus to forget. */
+  removed: string[];
+  /** What onShouldRetry answered for a failed create. */
+  retryAsked: boolean[];
+} = { instances: [], outcome: 'success', previous: [], location: null, removed: [], retryAsked: [] };
 
 interface FakeUpload {
   file: File;
@@ -83,7 +89,15 @@ vi.mock('tus-js-client', () => {
     headersSeen: Record<string, string> = {};
     constructor(file: File, options: Record<string, any>) {
       this.file = file;
-      this.options = options;
+      // like the browser build: defaults (incl. localStorage urlStorage) merged in
+      this.options = {
+        urlStorage: {
+          removeUpload: async (key: string) => {
+            tusState.removed.push(key);
+          },
+        },
+        ...options,
+      };
       tusState.instances.push(this as unknown as FakeUpload);
     }
     findPreviousUploads() {
@@ -99,6 +113,30 @@ vi.mock('tus-js-client', () => {
             this.headersSeen[k] = v;
           },
         });
+        if (!this.resumed) {
+          // A new upload: the server's create response goes through onAfterResponse
+          // before tus saves or uses its Location. A throw there is what tus 4.x
+          // turns into DetailedError('tus: failed to create upload', cause, req, null).
+          const req = { getMethod: () => 'POST', getURL: () => this.options.endpoint };
+          const res = {
+            getStatus: () => 201,
+            getBody: () => '',
+            getHeader: (h: string) =>
+              h.toLowerCase() === 'location' ? (tusState.location ?? undefined) : undefined,
+          };
+          try {
+            await this.options.onAfterResponse?.(req, res);
+          } catch (cause) {
+            const err = Object.assign(new Error(`tus: failed to create upload, caused by ${cause}`), {
+              causingError: cause,
+              originalRequest: req,
+              originalResponse: null,
+            });
+            tusState.retryAsked.push(!!this.options.onShouldRetry?.(err, 0, this.options));
+            this.options.onError?.(err);
+            return;
+          }
+        }
         const outcome = tusState.outcome;
         if (outcome === 'success') {
           this.options.onProgress?.(this.file.size, this.file.size);
@@ -120,7 +158,9 @@ import {
   canResumeInto,
   isStalledUpload,
   isUnfinishedUpload,
+  isUsableUploadUrl,
   reattachFlightLog,
+  tusEndpoint,
   uploadFlightLog,
 } from './logs';
 import type { FlightLog } from './db';
@@ -157,6 +197,9 @@ beforeEach(() => {
   tusState.instances = [];
   tusState.outcome = 'success';
   tusState.previous = [];
+  tusState.location = 'https://sb.test/storage/v1/upload/resumable/new-id';
+  tusState.removed = [];
+  tusState.retryAsked = [];
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 });
 
@@ -204,6 +247,33 @@ describe('isStalledUpload', () => {
   });
   it('ignores other statuses', () => {
     expect(isStalledUpload({ status: 'parsed', uploaded_at: '2020-01-01T00:00:00Z' }, at)).toBe(false);
+  });
+});
+
+describe('isUsableUploadUrl', () => {
+  const ep = 'https://supabase.arrowair.com/storage/v1/upload/resumable';
+
+  it('accepts upload URLs under the endpoint', () => {
+    expect(isUsableUploadUrl(`${ep}/ZmxpZ2h0LWxvZ3M`, ep)).toBe(true);
+    expect(isUsableUploadUrl(`${ep}/sign/abc`, ep)).toBe(true);
+    // same origin spelled with the default port, or a relative Location
+    expect(isUsableUploadUrl('https://supabase.arrowair.com:443/storage/v1/upload/resumable/abc', ep)).toBe(true);
+    expect(isUsableUploadUrl('/storage/v1/upload/resumable/abc', ep)).toBe(true);
+  });
+
+  it("rejects what a proxied self-hosted Supabase hands out, and anything else off the endpoint", () => {
+    // Nov 2026: Kong's own scheme and port, no /storage/v1 prefix
+    expect(isUsableUploadUrl('http://supabase.arrowair.com:8000/upload/resumable/abc', ep)).toBe(false);
+    expect(isUsableUploadUrl('http://supabase.arrowair.com/storage/v1/upload/resumable/abc', ep)).toBe(false);
+    expect(isUsableUploadUrl('https://evil.example/storage/v1/upload/resumable/abc', ep)).toBe(false);
+    expect(isUsableUploadUrl('https://supabase.arrowair.com/storage/v1/object/abc', ep)).toBe(false);
+    expect(isUsableUploadUrl(ep, ep)).toBe(false);
+    expect(isUsableUploadUrl(null, ep)).toBe(false);
+    expect(isUsableUploadUrl('', ep)).toBe(false);
+  });
+
+  it("is anchored to this app's Supabase endpoint", () => {
+    expect(tusEndpoint()).toBe('https://sb.test/storage/v1/upload/resumable');
   });
 });
 
@@ -282,6 +352,59 @@ describe('uploadFlightLog', () => {
     tusState.previous = [{ uploadUrl: 'https://sb.test/storage/v1/upload/resumable/abc' }];
     await uploadFlightLog('f1', large());
     expect(tusState.instances[0].resumed).toEqual(tusState.previous[0]);
+    expect(tusState.removed).toEqual([]);
+  });
+
+  it('forgets a saved upload URL this page cannot reach and starts a fresh upload', async () => {
+    state.results = [
+      { data: row(), error: null },
+      { data: [row({ status: 'uploaded' })], error: null },
+    ];
+    tusState.previous = [
+      { uploadUrl: 'http://sb.test:8000/upload/resumable/dead', urlStorageKey: 'tus::k-dead' },
+    ];
+    await uploadFlightLog('f1', large());
+    expect(tusState.instances[0].resumed).toBeNull();
+    expect(tusState.removed).toEqual(['tus::k-dead']);
+    expect(state.uploads).toHaveLength(0); // went up through tus
+    expect(ops(1)[0]).toEqual(['update', { status: 'uploaded', error: null }]);
+  });
+
+  it('resumes the usable saved upload and drops only the stale one', async () => {
+    state.results = [
+      { data: row(), error: null },
+      { data: [row({ status: 'uploaded' })], error: null },
+    ];
+    const stale = { uploadUrl: 'http://sb.test:8000/upload/resumable/dead', urlStorageKey: 'tus::k-dead' };
+    const good = { uploadUrl: 'https://sb.test/storage/v1/upload/resumable/live', urlStorageKey: 'tus::k-live' };
+    tusState.previous = [stale, good];
+    await uploadFlightLog('f1', large());
+    expect(tusState.instances[0].resumed).toEqual(good);
+    expect(tusState.removed).toEqual(['tus::k-dead']);
+  });
+
+  it('falls back to a single PUT, without retrying, when the server hands back an unreachable upload URL', async () => {
+    state.results = [
+      { data: row(), error: null },
+      { data: [row({ status: 'uploaded' })], error: null },
+    ];
+    tusState.location = 'http://sb.test:8000/upload/resumable/abc';
+    const out = await uploadFlightLog('f1', large());
+    expect(tusState.retryAsked).toEqual([false]);
+    expect(state.uploads).toEqual([{ bucket: 'flight-logs', path: `f1/${SUM.slice(0, 12)}_x.BIN` }]);
+    expect(ops(1)[0]).toEqual(['update', { status: 'uploaded', error: null }]);
+    expect(out.status).toBe('uploaded');
+  });
+
+  it('keeps a usable upload URL from the server and uploads through tus', async () => {
+    state.results = [
+      { data: row(), error: null },
+      { data: [row({ status: 'uploaded' })], error: null },
+    ];
+    tusState.location = '/storage/v1/upload/resumable/relative-id';
+    await uploadFlightLog('f1', large());
+    expect(tusState.retryAsked).toEqual([]);
+    expect(state.uploads).toHaveLength(0);
   });
 
   it('falls back to a single PUT when the tus endpoint is missing', async () => {
